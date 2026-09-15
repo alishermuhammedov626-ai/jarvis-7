@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smc-memecoin-scalper"
+version = "0.1.0"
+description = "24/7 SMC (Smart Money Concept) scalping bot for top memecoins"
+requires-python = ">=3.10"
+dependencies = ["ccxt>=4.4", "pandas>=2.2", "numpy>=1.26"]
+
+[tool.setuptools.packages.find]
+include = ["smc_bot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

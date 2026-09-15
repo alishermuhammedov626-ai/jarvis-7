@@ -1,0 +1,36 @@
+{
+  "symbols": ["DOGE/USDT:USDT", "SHIB/USDT:USDT", "PEPE/USDT:USDT",
+              "WIF/USDT:USDT", "BONK/USDT:USDT", "FLOKI/USDT:USDT"],
+  "loop_seconds": 60,
+  "state_dir": "state",
+  "log_level": "INFO",
+  "analysis": {
+    "displacement_atr_mult": 1.0,
+    "sl_atr_buffer": 0.5,
+    "entry_zone_ratio": 0.5,
+    "min_rr_tp1": 1.0,
+    "min_rr_tp2": 2.0,
+    "tp2_fixed_rr": 3.0,
+    "entry_ttl_minutes": 60,
+    "trail_atr_mult": 1.0
+  },
+  "risk": {
+    "risk_per_trade_pct": 1.0,
+    "max_open_positions": 2,
+    "max_trades_per_day": 4,
+    "daily_loss_limit_pct": 3.0,
+    "leverage": 5
+  },
+  "market": {
+    "max_spread_bps": 6.0,
+    "min_quote_volume_24h": 50000000,
+    "min_depth_notional": 200000
+  },
+  "exchange": {
+    "exchange_id": "binanceusdm",
+    "paper": true,
+    "paper_equity": 10000,
+    "slippage_bps": 8,
+    "fee_bps": 4
+  }
+}
