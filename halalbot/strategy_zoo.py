@@ -625,9 +625,23 @@ class GridNeutral(Z):
         raise NotImplementedError("grid alohida dvigatelda ishlaydi: run_any() ni ishlating")
 
 
+@reg
+class DcaLong(Z):
+    """3commas uslubidagi DCA/martingale LONG bot: TP 1%, 5 xavfsizlik buyurtmasi x2, SL yo'q."""
+    name, family = "hw_dca_martingale_long_tp1_so5", "highwr"
+    is_dca = True; dca_side = 1
+
+@reg
+class DcaShort(DcaLong):
+    name = "hw_dca_martingale_short_tp1_so5"; dca_side = -1
+
+
 def run_any(df, Zc, cfg):
-    """Strategiya turiga qarab mos dvigatelni chaqiradi (grid yoki signal-asosli)."""
+    """Strategiya turiga qarab mos dvigatelni chaqiradi (grid / dca / signal-asosli)."""
     from .futures_backtest import run_futures
+    if getattr(Zc, "is_dca", False):
+        from .dca_backtest import DcaConfig, run_dca
+        return run_dca(df, DcaConfig(leverage=cfg.leverage, side=Zc.dca_side, taker_fee=cfg.taker_fee, funding_rate_8h=cfg.funding_rate_8h))
     if getattr(Zc, "is_grid", False):
         from .grid_backtest import GridConfig, run_grid
         return run_grid(df, GridConfig(leverage=cfg.leverage, taker_fee=cfg.taker_fee, maker_fee=cfg.maker_fee,
@@ -638,5 +652,6 @@ def run_any(df, Zc, cfg):
 HIGHWR = [z for z in ZOO if z.family == "highwr"]
 
 
+from . import zoo2 as _zoo2  # noqa: E402
 from . import smc as _smc  # noqa: E402  (SMC strategiyalarini ro'yxatga qo'shadi)
 SMC = _smc.SMC

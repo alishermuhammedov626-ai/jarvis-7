@@ -6,3 +6,4 @@ reports/variants_raw.csv
 .env
 reports/**/*_raw.csv
 reports/*_raw.csv
+reports/mega/*_raw.csv

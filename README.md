@@ -28,6 +28,15 @@ python3 run_zoo.py --partial 1.0                    # istalgan to'plam qisman TP
 python3 run_partial_compare.py                      # oddiy vs qisman TP solishtiruv
 ```
 
+## MEGA sinov: 519 strategiya x 3 TF, 3 bosqich (reports/MEGA_XULOSA.md)
+
+89 nomli (klassik + TradingView top + SMC + grid/DCA + ML) + 380 parametrik variant + 51 tasodifiy nazorat.
+Voronka: 1 551 sinov -> 35 (1-bosqich, nazorat ham 1 ta o'tdi) -> 6 -> **0**. Kuniga 2.5+ savdo qiladigan 342 sinovdan
+0 tasi foydali. Winrate 60%+ bo'lgan 22 sinovning median daromadi -0.6%.
+```bash
+python3 run_mega.py --charts 10 --val-charts 15      # ~7 daqiqa, 4 yadro, 100 000+ backtest
+```
+
 ## Smart Money Concepts (SMC/ICT) botlari
 
 `halalbot/smc.py`: 8 causal SMC strategiya (FVG retest, order block retest, liquidity sweep, CHoCH, Silver Bullet,

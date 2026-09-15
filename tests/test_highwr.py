@@ -67,7 +67,7 @@ def test_grid_profits_in_perfect_range_and_loses_on_breakout():
     assert r2.sl_events >= 1
 
 
-@pytest.mark.parametrize("Zc", [z for z in HIGHWR if not getattr(z, "is_grid", False)], ids=lambda z: z.name)
+@pytest.mark.parametrize("Zc", [z for z in HIGHWR if not getattr(z, "is_grid", False) and not getattr(z, "is_dca", False)], ids=lambda z: z.name)
 def test_highwr_no_lookahead(Zc):
     df = synthetic.generate("regime", days=20, seed=42)
     full = Zc().fsignals(df)
