@@ -7,7 +7,7 @@
 Bu ko'p-marta-sinash (multiple testing) tuzog'idan himoya: 86 ta sinovdan tasodifan ham bir nechtasi
 1-bosqichda 'yaxshi' ko'rinadi.
 """
-import argparse, time
+import argparse, os, time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -16,7 +16,7 @@ import pandas as pd
 
 from halalbot import synthetic
 from halalbot.futures_backtest import FuturesConfig, run_futures
-from halalbot.strategy_zoo import ZOO
+from halalbot.strategy_zoo import ZOO, run_any
 
 REGIMES = ["gbm", "garch", "regime", "trend_up", "trend_down"]
 TFS = ["15m", "1h"]
@@ -30,8 +30,12 @@ def resample(df, tf):
 _REAL: dict = {}   # csv rejimida oynalar (har jarayon o'zi yuklaydi)
 
 
+PARTIAL = {"r": 0.0, "frac": 0.6}
+
+
 def one(args):
     regime, seed, days, lev, fee, names = args
+    pr = float(os.environ.get("ZOO_PARTIAL_R", "0")); pf = float(os.environ.get("ZOO_PARTIAL_FRAC", "0.6"))
     if regime == "real":
         base = _real_window(seed)
         days = (base.index[-1] - base.index[0]).total_seconds() / 86400
@@ -43,7 +47,7 @@ def one(args):
         for Zc in ZOO:
             if names and Zc.name not in names: continue
             try:
-                m = run_futures(df, Zc(), FuturesConfig(leverage=lev, taker_fee=fee)).metrics(days)
+                m = run_any(df, Zc, FuturesConfig(leverage=lev, taker_fee=fee, partial_tp_r=pr, partial_frac=pf)).metrics(days)
             except Exception as e:  # bitta strategiya xatosi butun partiyani to'xtatmasin
                 m = {"return_pct": np.nan, "error": str(e)[:80]}
             m.update(regime=regime, seed=seed, tf=tf, strategy=Zc.name, family=Zc.family); rows.append(m)
@@ -99,9 +103,14 @@ def main():
     ap.add_argument("--fee", type=float, default=0.0005)
     ap.add_argument("--min-pct", type=float, default=55.0)
     ap.add_argument("--out", default="reports")
+    ap.add_argument("--family", default=None, help="faqat shu oila (masalan highwr)")
+    ap.add_argument("--partial", type=float, default=0.0, help=">0: qisman TP shu R da (60%% yopiladi) + breakeven")
     ap.add_argument("--csv", default=None, help="TradingView eksport / Binance klines CSV: REAL ma'lumotda walk-forward")
     ap.add_argument("--window-days", type=int, default=30, help="csv rejimida har 'grafik' uzunligi")
     a = ap.parse_args(); out = Path(a.out); out.mkdir(exist_ok=True); t0 = time.time()
+    os.environ["ZOO_PARTIAL_R"] = str(a.partial)
+    if a.family:
+        ZOO[:] = [z for z in ZOO if z.family in (a.family, "control")]
     if a.csv:
         return main_csv(a, out, t0)
 

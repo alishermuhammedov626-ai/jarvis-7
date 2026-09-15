@@ -56,6 +56,8 @@ def generate(regime: str, days: int, seed: int, start_price: float = 60_000.0,
         r = mu + _garch(rng, n, base_sigma)
     elif regime == "regime":
         r = _regime_switch(rng, n, base_sigma, dt)
+    elif regime == "range":
+        r = _pure_range(rng, n, base_sigma)          # sof yonbosh (OU): grid uchun eng qulay holat
     else:
         raise ValueError(f"noma'lum rejim: {regime}")
 
@@ -74,6 +76,16 @@ def _garch(rng, n, base_sigma, alpha=0.08, beta=0.90):
         var[i] = v
         r[i] = np.sqrt(v) * z[i]
         v = omega + alpha * r[i] ** 2 + beta * v
+    return r
+
+
+def _pure_range(rng, n, base_sigma, kappa_per_day=0.5):
+    steps_per_day = CANDLES_PER_DAY * SUBSTEPS
+    kappa = kappa_per_day / steps_per_day
+    noise = _garch(rng, n, base_sigma * 0.8)
+    r = np.empty(n); dev = 0.0
+    for i in range(n):
+        r[i] = -kappa * dev + noise[i]; dev += r[i]
     return r
 
 

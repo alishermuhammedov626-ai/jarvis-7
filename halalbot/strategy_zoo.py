@@ -520,3 +520,119 @@ class RandomEntry(Z):
 
 
 def zoo_names(): return [z.name for z in ZOO]
+
+
+# ================================================================= "Yuqori winrate" to'plami (foydalanuvchi ro'yxati)
+
+def _session_twap_bands(df):
+    """Hajm yo'q -> VWAP o'rniga kunlik ankerli TWAP (hlc3 o'rtachasi) va uning kumulyativ std'i."""
+    tp = ((df["high"] + df["low"] + df["close"]) / 3).values
+    day = ind.day_index(df.index)
+    n = len(df); mean = np.full(n, np.nan); sd = np.full(n, np.nan)
+    s = s2 = 0.0; k = 0; cur = -1
+    for i in range(n):
+        if day[i] != cur: cur, s, s2, k = day[i], 0.0, 0.0, 0
+        s += tp[i]; s2 += tp[i] ** 2; k += 1
+        if k >= 8:
+            m = s / k; v = max(s2 / k - m * m, 0.0)
+            mean[i] = m; sd[i] = np.sqrt(v)
+    return pd.Series(mean, df.index), pd.Series(sd, df.index)
+
+
+@reg
+class VwapBandReversion(Z):
+    """2) VWAP 2.5σ dan qaytish, TP faqat 1σ chizig'igacha (kichik maqsad)."""
+    name, family = "hw_vwap_2.5sigma_tp_1sigma", "highwr"
+    def fsignals(self, df):
+        m, sd = _session_twap_bands(df); c = df["close"]
+        lg = c < m - 2.5 * sd; sh = c > m + 2.5 * sd
+        tp = ((m - sd) - c).where(lg, (c - (m + sd)).where(sh, np.nan)).clip(lower=0)
+        sl = 1.5 * sd
+        return _f(df, lg & (tp > 0), sh & (tp > 0), sl=sl, tp=tp, time_stop=24)
+
+
+@reg
+class MtfConfluence(Z):
+    """3) Ko'p taymfreym mos kelishi: 1h trend + 15m daraja + rad etish shami + RSI. (Hajm sintetikda yo'q.)"""
+    name, family = "hw_mtf_confluence_1h_15m_rejection_rsi", "highwr"
+    def fsignals(self, df):
+        c, o, h, l = df["close"], df["open"], df["high"], df["low"]
+        h1 = c.resample("1h").last(); e = ind.ema(h1, 50)
+        up = ((h1 > e) & (e > e.shift(1))).shift(1).reindex(df.index, method="ffill").fillna(False).astype(bool)
+        dn = ((h1 < e) & (e < e.shift(1))).shift(1).reindex(df.index, method="ffill").fillna(False).astype(bool)
+        a = ind.atr(df, 14); r = ind.rsi(c, 14)
+        sup = l.shift(1).rolling(48).min(); res = h.shift(1).rolling(48).max()      # 15m kuchli daraja (12 soat)
+        near_sup = (l <= sup + 0.5 * a) & (c > sup); near_res = (h >= res - 0.5 * a) & (c < res)
+        rng = (h - l).replace(0, np.nan); body = (c - o).abs()
+        lower_wick = pd.concat([o, c], axis=1).min(axis=1) - l; upper_wick = h - pd.concat([o, c], axis=1).max(axis=1)
+        rej_long = (lower_wick > 0.5 * rng) & (c > o); rej_short = (upper_wick > 0.5 * rng) & (c < o)
+        lg = up & near_sup & rej_long & (r < 50) & (r > r.shift(1))
+        sh = dn & near_res & rej_short & (r > 50) & (r < r.shift(1))
+        sl = (c - l + 0.25 * a).where(lg, (h - c + 0.25 * a).where(sh, np.nan))
+        return _f(df, lg, sh, sl=sl, tp=2.0 * sl, time_stop=48)
+
+
+@reg
+class LiquidationWickLimit(Z):
+    """5) Likvidatsiya soyasini limit buyurtma bilan ushlash: support ostida limit, kichik TP."""
+    name, family = "hw_liquidation_wick_limit_order", "highwr"
+    def fsignals(self, df):
+        c, h, l = df["close"], df["high"], df["low"]; a = ind.atr(df, 14)
+        sup = l.shift(1).rolling(96).min(); res = h.shift(1).rolling(96).max()
+        # signal: narx support/resistansga yaqinlashdi (1 ATR ichida) -> limit qo'yamiz
+        lg = (l <= sup + 1.0 * a) & (c > sup); sh = (h >= res - 1.0 * a) & (c < res)
+        limit = (sup - 0.5 * a).where(lg, (res + 0.5 * a).where(sh, np.nan))
+        s = _f(df, lg, sh, sl=1.5 * a, tp=1.0 * a, time_stop=16)
+        s.limit_price = np.asarray(limit, dtype=float); s.limit_ttl = 8
+        return s
+
+
+@reg
+class SessionFakeoutFade(Z):
+    """6) Osiyo diapazoni (00-07 UTC) London ochilishida buziladi va qaytadi -> qarama-qarshi kirish, TP diapazon o'rtasi."""
+    name, family = "hw_session_fakeout_fade_london", "highwr"
+    def fsignals(self, df):
+        idx = df.index; hour = idx.hour.values; day = ind.day_index(idx); n = len(df)
+        h, l, c = df["high"].values, df["low"].values, df["close"].values
+        a = ind.atr(df, 14).values
+        rh = np.full(n, np.nan); rl = np.full(n, np.nan)
+        lg = np.zeros(n, bool); sh = np.zeros(n, bool); tp = np.full(n, np.nan); sl = np.full(n, np.nan)
+        cur = -1; ah = al = np.nan; broke_up = broke_dn = False; ext = np.nan
+        for i in range(n):
+            if day[i] != cur:
+                cur = day[i]; ah = al = np.nan; broke_up = broke_dn = False
+            if hour[i] < 7:
+                ah = h[i] if np.isnan(ah) else max(ah, h[i]); al = l[i] if np.isnan(al) else min(al, l[i])
+            elif 7 <= hour[i] < 11 and not np.isnan(ah):
+                if not broke_up and c[i] > ah: broke_up = True; ext = h[i]
+                elif broke_up and c[i] < ah:                        # diapazonga qaytdi -> short
+                    sh[i] = True; sl[i] = ext - c[i] + 0.25 * a[i]; tp[i] = c[i] - (ah + al) / 2; broke_up = False
+                if not broke_dn and c[i] < al: broke_dn = True; ext = l[i]
+                elif broke_dn and c[i] > al:                         # qaytdi -> long
+                    lg[i] = True; sl[i] = c[i] - ext + 0.25 * a[i]; tp[i] = (ah + al) / 2 - c[i]; broke_dn = False
+                if broke_up: ext = max(ext, h[i])
+                if broke_dn: ext = min(ext, l[i])
+        ok = (tp > 0) & (sl > 0)
+        return _f(df, lg & ok, sh & ok, sl=sl, tp=tp, group=day, time_stop=32)
+
+
+@reg
+class GridNeutral(Z):
+    """1) Neytral grid-bot (yonbosh bozor). Alohida simulyator: halalbot/grid_backtest.py."""
+    name, family = "hw_grid_neutral_10_levels_sl", "highwr"
+    is_grid = True
+    def fsignals(self, df):
+        raise NotImplementedError("grid alohida dvigatelda ishlaydi: run_any() ni ishlating")
+
+
+def run_any(df, Zc, cfg):
+    """Strategiya turiga qarab mos dvigatelni chaqiradi (grid yoki signal-asosli)."""
+    from .futures_backtest import run_futures
+    if getattr(Zc, "is_grid", False):
+        from .grid_backtest import GridConfig, run_grid
+        return run_grid(df, GridConfig(leverage=cfg.leverage, taker_fee=cfg.taker_fee, maker_fee=cfg.maker_fee,
+                                       slippage=cfg.slippage, funding_rate_8h=cfg.funding_rate_8h))
+    return run_futures(df, Zc(), cfg)
+
+
+HIGHWR = [z for z in ZOO if z.family == "highwr"]

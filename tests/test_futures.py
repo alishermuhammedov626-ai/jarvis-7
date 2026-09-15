@@ -69,7 +69,7 @@ def test_max_trades_per_day_futures():
         assert per_day.empty or per_day.max() <= 3
 
 
-@pytest.mark.parametrize("Zc", ZOO, ids=lambda z: z.name)
+@pytest.mark.parametrize("Zc", [z for z in ZOO if not getattr(z, "is_grid", False)], ids=lambda z: z.name)
 def test_zoo_no_lookahead(Zc):
     if Zc.name == "control_random_entry":
         pytest.skip("tasodifiy nazorat")

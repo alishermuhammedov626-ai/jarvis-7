@@ -33,6 +33,8 @@ class FSignals:
     trail_atr: float = 0.0
     time_stop: int = 10 ** 9
     atr: np.ndarray | None = None
+    limit_price: np.ndarray | None = None   # NaN = market kirish; aks holda limit buyurtma narxi
+    limit_ttl: int = 8                      # limit buyurtma necha sham kutadi
 
 
 @dataclass
@@ -47,6 +49,9 @@ class FuturesConfig:
     max_trades_per_day: int = 4
     allow_short: bool = True
     min_notional: float = 5.0
+    maker_fee: float = 0.0002            # limit kirishlar uchun
+    partial_tp_r: float = 0.0            # >0: pozitsiyaning partial_frac qismi shu R (SL masofasi karrasi) da yopiladi
+    partial_frac: float = 0.6            # ... va qolganiga stop kirish narxiga (breakeven) ko'chadi
 
 
 @dataclass
@@ -113,6 +118,8 @@ def run_futures(df: pd.DataFrame, strat, cfg: FuturesConfig | None = None) -> FR
     pending = 0                       # +1 long, -1 short
     pend_sl = pend_tp = np.nan
     pend_group = -1
+    pend_limit = np.nan; pend_ttl = 0
+    partial_done = False; partial_px = np.nan; pos_realized = 0.0
     pos = 0                            # +1/-1/0
     entry_px = sl_px = tp_px = np.nan
     notional = qty = 0.0
@@ -123,15 +130,35 @@ def run_futures(df: pd.DataFrame, strat, cfg: FuturesConfig | None = None) -> FR
     used_groups: set[int] = set()
 
     def close(i, px, reason):
-        nonlocal equity, pos, fees_paid, qty, notional
+        nonlocal equity, pos, fees_paid, qty, notional, pos_realized
         px = px * (1 - cfg.slippage * pos)
         fee = qty * px * cfg.taker_fee
-        pnl = (px - entry_px) * qty * pos - fee - entry_fee
+        pnl = (px - entry_px) * qty * pos - fee - entry_fee + pos_realized
         equity += (px - entry_px) * qty * pos - fee
         fees_paid += fee
         trades.append(FTrade("LONG" if pos > 0 else "SHORT", times[entry_i], times[i], entry_px, px, notional, pnl, reason))
         pos = 0
         qty = notional = 0.0
+        pos_realized = 0.0
+
+    def open_position(i, px, side, sl_dist, tp_dist, is_limit):
+        nonlocal equity, fees_paid, entry_fee, entry_px, pos, sl_px, tp_px, entry_i, extreme, trades_today
+        nonlocal notional, qty, partial_done, partial_px, pos_realized
+        risk_amt = equity * cfg.risk_per_trade
+        want = equity * cfg.leverage if np.isinf(sl_dist) else min(risk_amt / (sl_dist / px), equity * cfg.leverage)
+        if want < cfg.min_notional or equity <= 0:
+            return False
+        notional = want; qty = notional / px
+        fee = notional * (cfg.maker_fee if is_limit else cfg.taker_fee)
+        equity -= fee; fees_paid += fee; entry_fee = fee
+        entry_px = px; pos = side
+        sl_px = px - sl_dist * side
+        tp_px = px + tp_dist * side if not np.isnan(tp_dist) else np.nan
+        partial_done = False; pos_realized = 0.0
+        partial_px = px + cfg.partial_tp_r * sl_dist * side if cfg.partial_tp_r > 0 and not np.isinf(sl_dist) else np.nan
+        entry_i = i; extreme = h[i] if side > 0 else l[i]
+        trades_today += 1
+        return True
 
     for i in range(n):
         if day_id[i] != cur_day:
@@ -140,30 +167,25 @@ def run_futures(df: pd.DataFrame, strat, cfg: FuturesConfig | None = None) -> FR
             eq_curve[i] = equity
             continue
 
-        # 1) kutilayotgan kirish -> ochilishda
+        # 1) kutilayotgan kirish -> market: ochilishda; limit: narx tegsa
         if pending and pos == 0:
             side = pending
-            pending = 0
-            px = o[i] * (1 + cfg.slippage * side)
-            sl_dist = pend_sl
-            risk_amt = equity * cfg.risk_per_trade
-            want = equity * cfg.leverage if np.isinf(sl_dist) else min(risk_amt / (sl_dist / px), equity * cfg.leverage)
-            if want >= cfg.min_notional and equity > 0:
-                notional = want
-                qty = notional / px
-                fee = notional * cfg.taker_fee
-                equity -= fee
-                fees_paid += fee
-                entry_fee = fee
-                entry_px = px
-                pos = side
-                sl_px = px - sl_dist * side
-                tp_px = px + pend_tp * side if not np.isnan(pend_tp) else np.nan
-                entry_i = i
-                extreme = h[i] if side > 0 else l[i]
-                trades_today += 1
-                if pend_group >= 0:
+            if np.isnan(pend_limit):
+                pending = 0
+                px = o[i] * (1 + cfg.slippage * side)
+                if open_position(i, px, side, pend_sl, pend_tp, False) and pend_group >= 0:
                     used_groups.add(pend_group)
+            else:
+                touched = (l[i] <= pend_limit) if side > 0 else (h[i] >= pend_limit)
+                if touched:
+                    pending = 0
+                    px = min(pend_limit, o[i]) if side > 0 else max(pend_limit, o[i])
+                    if open_position(i, px, side, pend_sl, pend_tp, True) and pend_group >= 0:
+                        used_groups.add(pend_group)
+                else:
+                    pend_ttl -= 1
+                    if pend_ttl <= 0:
+                        pending = 0
 
         # 2) ochiq pozitsiya
         if pos != 0 and i > entry_i:
@@ -180,7 +202,22 @@ def run_futures(df: pd.DataFrame, strat, cfg: FuturesConfig | None = None) -> FR
             margin = notional / cfg.leverage
             liq_px = entry_px - pos * (margin * (1 - cfg.maint_margin)) / qty
             hit_liq = (l[i] <= liq_px) if pos > 0 else (h[i] >= liq_px)
+            # qisman TP + breakeven (SL dan oldin tekshiriladi, faqat SL tegmagan bo'lsa)
             hit_sl = (l[i] <= sl_px) if pos > 0 else (h[i] >= sl_px)
+            if not partial_done and not np.isnan(partial_px) and not hit_sl and not hit_liq:
+                hit_p = (h[i] >= partial_px) if pos > 0 else (l[i] <= partial_px)
+                if hit_p:
+                    pq = qty * cfg.partial_frac
+                    ppx = partial_px * (1 - cfg.slippage * pos)
+                    fee = pq * ppx * cfg.taker_fee
+                    gain = (ppx - entry_px) * pq * pos - fee
+                    equity += gain; fees_paid += fee; pos_realized += gain
+                    qty -= pq; notional = qty * entry_px
+                    sl_px = entry_px            # breakeven
+                    partial_done = True
+                    hit_sl = (l[i] <= sl_px) if pos > 0 else (h[i] >= sl_px)   # shu shamda qaytib tegishi mumkin
+                    if hit_sl and ((c[i] > sl_px) if pos > 0 else (c[i] < sl_px)):
+                        hit_sl = False       # partial dan keyin yopilishgacha qaytmagan deb hisoblaymiz
             hit_tp = (not np.isnan(tp_px)) and ((h[i] >= tp_px) if pos > 0 else (l[i] <= tp_px))
             if hit_liq and (pos > 0 and liq_px >= sl_px or pos < 0 and liq_px <= sl_px):
                 # likvidatsiya SL dan oldin: margin to'liq yo'qoladi
@@ -215,6 +252,8 @@ def run_futures(df: pd.DataFrame, strat, cfg: FuturesConfig | None = None) -> FR
                 if g < 0 or g not in used_groups:
                     pending = side
                     pend_sl = float(sig.sl_dist[i]); pend_tp = float(sig.tp_dist[i]); pend_group = g
+                    pend_limit = float(sig.limit_price[i]) if sig.limit_price is not None else np.nan
+                    pend_ttl = sig.limit_ttl
 
         unreal = (c[i] - entry_px) * qty * pos if pos else 0.0
         eq_curve[i] = max(equity + unreal, 0.0)

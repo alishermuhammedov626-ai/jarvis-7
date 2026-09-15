@@ -16,6 +16,18 @@ python3 run_zoo.py --charts 30 --val-charts 40 --leverage 3 --fee 0.0005     # ~
 python3 run_futures_live.py --strategy bollinger_meanrev_20_2 --leverage 3 --dry-run 1   # testnet dry-run
 ```
 
+## "Yuqori winrate" usullari (grid, VWAP σ, MTF confluence, qisman TP, likvidatsiya soyasi, fakeout, order book, funding arbitraj)
+
+`reports/HIGHWR_XULOSA.md` — 8 usul bo'yicha sinov. Qisqacha: grid to'r savdolari 100% foyda bilan yopiladi,
+lekin SL bilan -17..-32%, SL'siz faqat sof yonboshda foyda (trendda -24%, DD -39%); qisman TP + breakeven
+winrate'ni 35%->46% oshiradi, daromadni -38%->-43% tushiradi; qolganlari manfiy. Order book skalping va
+funding arbitraj backtest qilib bo'lmaydi (birinchisiga L2 stakan, ikkinchisiga funding tarixi kerak).
+```bash
+python3 run_zoo.py --family highwr --charts 40      # 6 usul, ikki bosqich
+python3 run_zoo.py --partial 1.0                    # istalgan to'plam qisman TP + breakeven bilan
+python3 run_partial_compare.py                      # oddiy vs qisman TP solishtiruv
+```
+
 ## TradingView bilan ishlash (real ma'lumot)
 
 Bu muhitdan TradingView/Binance ga tarmoq yopiq, shuning uchun real ma'lumot ikki yo'l bilan olinadi:
