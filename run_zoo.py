@@ -27,9 +27,16 @@ def resample(df, tf):
     return df.resample(tf).agg({"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
 
 
+_REAL: dict = {}   # csv rejimida oynalar (har jarayon o'zi yuklaydi)
+
+
 def one(args):
     regime, seed, days, lev, fee, names = args
-    base = synthetic.generate(regime, days=days, seed=seed)
+    if regime == "real":
+        base = _real_window(seed)
+        days = (base.index[-1] - base.index[0]).total_seconds() / 86400
+    else:
+        base = synthetic.generate(regime, days=days, seed=seed)
     rows = []
     for tf in TFS:
         df = resample(base, tf)
@@ -43,8 +50,16 @@ def one(args):
     return rows
 
 
-def run_stage(charts, seed0, days, lev, fee, names=None, workers=4):
-    jobs = [(r, seed0 + k, days, lev, fee, names) for r in REGIMES for k in range(charts)]
+def _real_window(k):
+    if "windows" not in _REAL:
+        from halalbot.tv_csv import load_ohlc, split_windows, to_15m
+        _REAL["windows"] = split_windows(to_15m(load_ohlc(_REAL["path"])), _REAL["window_days"])
+    return _REAL["windows"][k]
+
+
+def run_stage(charts, seed0, days, lev, fee, names=None, workers=4, regimes=None):
+    regimes = regimes or REGIMES
+    jobs = [(r, seed0 + k, days, lev, fee, names) for r in regimes for k in range(charts)]
     rows = []
     with ProcessPoolExecutor(workers) as ex:
         for out in ex.map(one, jobs, chunksize=2): rows.extend(out)
@@ -84,7 +99,11 @@ def main():
     ap.add_argument("--fee", type=float, default=0.0005)
     ap.add_argument("--min-pct", type=float, default=55.0)
     ap.add_argument("--out", default="reports")
+    ap.add_argument("--csv", default=None, help="TradingView eksport / Binance klines CSV: REAL ma'lumotda walk-forward")
+    ap.add_argument("--window-days", type=int, default=30, help="csv rejimida har 'grafik' uzunligi")
     a = ap.parse_args(); out = Path(a.out); out.mkdir(exist_ok=True); t0 = time.time()
+    if a.csv:
+        return main_csv(a, out, t0)
 
     print(f"1-bosqich: {len(ZOO)} strategiya x {len(TFS)} TF x {len(REGIMES)} rejim x {a.charts} grafik ...")
     s1 = run_stage(a.charts, 1, a.days, a.leverage, a.fee)
@@ -127,6 +146,53 @@ def main():
     (out / "zoo_results.md").write_text("\n".join(lines))
     print(f"\n{out/'zoo_results.md'} yozildi, {time.time()-t0:.0f}s")
     print(sum1.head(15)[["tf", "strategy", "median_ret", "pct_profitable", "tpd", "med_gbm"]].to_string(index=False))
+
+
+def main_csv(a, out, t0):
+    """Real ma'lumot: oynalar vaqt bo'yicha 60% / 20% / 20% ga bo'linadi (walk-forward)."""
+    from halalbot.tv_csv import load_ohlc, split_windows, to_15m
+    import os
+    _REAL.update(path=a.csv, window_days=a.window_days)
+    os.environ["HALALBOT_CSV"] = a.csv
+    wins = split_windows(to_15m(load_ohlc(a.csv)), a.window_days)
+    n = len(wins)
+    if n < 5:
+        raise SystemExit(f"Kamida 5 ta {a.window_days}-kunlik oyna kerak, topildi {n} (ko'proq tarix eksport qiling)")
+    n1 = max(3, int(n * 0.6)); n2 = max(1, int(n * 0.2)); n3 = n - n1 - n2
+    print(f"Real ma'lumot: {n} oyna x {a.window_days} kun ({wins[0].index[0].date()} .. {wins[-1].index[-1].date()}); "
+          f"qidiruv {n1}, tasdiqlash {n2} + {n3}")
+
+    def stage(k0, k, names=None):
+        df = run_stage(k, k0, a.window_days, a.leverage, a.fee, names=names, regimes=["real"])
+        return df
+
+    s1 = stage(0, n1); s1.to_csv(out / "real_stage1_raw.csv", index=False)
+    sum1 = summarize(s1); cand = sum1[sum1.apply(passes, axis=1, min_pct=a.min_pct)]
+    lines = [f"# REAL ma'lumot ({a.csv}) — walk-forward sinov\n",
+             f"- {n} oyna x {a.window_days} kun; qidiruv: birinchi {n1} oyna, tasdiqlash: keyingi {n2}, so'ng oxirgi {n3}",
+             f"- leverage {a.leverage}x, taker {a.fee*100:.3f}%, kuniga max 4 kirish\n",
+             "## 1-bosqich (in-sample)\n",
+             md_table(sum1, ["tf", "strategy", "family", "median_ret", "pct_profitable", "p05", "p95", "median_gross", "median_dd", "liq_pct", "tpd", "win_rate"]),
+             f"\n## Nomzodlar: {len(cand)}\n"]
+    survivors = cand
+    for rnd, (k0, k) in enumerate(((n1, n2), (n1 + n2, n3)), start=1):
+        if survivors.empty or k <= 0: break
+        sv = stage(k0, k, names=set(survivors.strategy)); sumv = summarize(sv)
+        keep = sumv.merge(survivors[["tf", "strategy"]], on=["tf", "strategy"])
+        ok = keep[keep.apply(passes, axis=1, min_pct=a.min_pct)]
+        lines += [f"\n## 2-bosqich {rnd}-raund (out-of-sample, {k} oyna): {len(ok)}/{len(keep)} o'tdi\n",
+                  md_table(keep, ["tf", "strategy", "median_ret", "pct_profitable", "p05", "p95", "tpd", "median_dd"])]
+        survivors = ok
+    lines.append(f"\n## YAKUN: {len(survivors)} strategiya barcha bosqichlardan o'tdi\n")
+    lines.append(md_table(survivors, ["tf", "strategy", "median_ret", "pct_profitable", "tpd"]) if len(survivors) else "Hech biri.")
+    if "control_random_entry" in set(survivors.strategy):
+        lines.append("\n**OGOHLANTIRISH:** tasodifiy kirish nazorati ham barcha bosqichlardan o'tdi. Demak bu ma'lumot hajmi "
+                     "(oynalar soni) natijani tasodifdan ajratish uchun yetarli emas. Kamida 2-3 yil tarix eksport qiling.")
+    if n < 24:
+        lines.append(f"\n**Eslatma:** {n} oyna kam. Ishonchli xulosa uchun 24+ oyna (2+ yil 15m tarix) tavsiya etiladi.")
+    (out / "real_results.md").write_text("\n".join(lines))
+    print(f"{out/'real_results.md'} yozildi, {time.time()-t0:.0f}s")
+    print(sum1.head(15)[["tf", "strategy", "median_ret", "pct_profitable", "tpd"]].to_string(index=False))
 
 
 if __name__ == "__main__":

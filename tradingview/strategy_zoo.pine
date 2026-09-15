@@ -1,0 +1,184 @@
+//@version=5
+// Strategiyalar kutubxonasi — jarvis-7 backtester bilan BIR XIL sozlamalar:
+//   taker 0.05% har tomonda, slippage 2 tick, leverage 3x (margin 33.33%), kuniga max 4 kirish,
+//   SL = 2 ATR, TP = 3 ATR (agar strategiya o'z chiqish qoidasiga ega bo'lmasa), 1% risk SL masofasida,
+//   kirish keyingi sham ochilishida (process_orders_on_close=false).
+// Qo'llash: TradingView -> Pine Editor -> joylashtiring -> "Add to chart" -> BINANCE:BTCUSDT.P, 15m
+//   -> Strategy Tester. "Deep Backtesting" (pullik tarif) bilan ko'proq tarix.
+// MUHIM: bitta yil ma'lumotda 40 strategiya sinasangiz, tasodifan 3-5 tasi "ishlaydi". Haqiqiy tekshiruv:
+//   sanani ikkiga bo'ling (in-sample / out-of-sample) va faqat ikkalasida ham foydali bo'lganini hisobga oling.
+strategy("Zoo strategiyalar (jarvis-7)", overlay=true, initial_capital=1000,
+     commission_type=strategy.commission.percent, commission_value=0.05, slippage=2,
+     margin_long=33.33, margin_short=33.33, pyramiding=0, process_orders_on_close=false,
+     calc_on_every_tick=false, max_bars_back=500)
+
+// ------------------------------------------------------------------ sozlamalar
+strat = input.string("bollinger_meanrev_20_2", "Strategiya", options=[
+     "ema_cross_9_21", "golden_death_cross_50_200", "ema200_trend_ema20_pullback", "chandelier_exit_trend",
+     "macd_signal_cross", "macd_zero_line", "trix_zero_cross",
+     "rsi14_30_70_reversal", "connors_rsi2_sma200", "stochastic_20_80_cross", "cci_100_reversal", "williams_r_reversal",
+     "bollinger_meanrev_20_2", "keltner_breakout", "turtle_donchian_20_10", "turtle_donchian_55_20", "zscore_meanrev_2",
+     "supertrend_10_3", "parabolic_sar_flip", "adx25_dmi_cross", "ichimoku_tk_cross_cloud", "heikin_ashi_color_change",
+     "control_random_entry"])
+maxPerDay  = input.int(4, "Kuniga max kirish", minval=1)
+riskPct    = input.float(1.0, "Risk % (SL masofasida)", step=0.25)
+lev        = input.float(3.0, "Leverage (margin bilan mos bo'lsin)", step=0.5)
+slMultIn   = input.float(2.0, "SL ATR koeff", step=0.5)
+tpMultIn   = input.float(3.0, "TP ATR koeff (strategiya o'z chiqishiga ega bo'lsa e'tiborsiz)", step=0.5)
+timeStopIn = input.int(96, "Vaqt stopi (shamlar)", minval=1)
+allowShort = input.bool(true, "Short ruxsat")
+allowLong  = input.bool(true, "Long ruxsat")
+inFrom     = input.time(timestamp("2024-01-01T00:00:00"), "Sinov boshi")
+inTo       = input.time(timestamp("2030-01-01T00:00:00"), "Sinov oxiri")
+
+// ------------------------------------------------------------------ indikatorlar (har bar hisoblanadi)
+atr14  = ta.atr(14)
+e9 = ta.ema(close, 9),   e20 = ta.ema(close, 20),  e21 = ta.ema(close, 21)
+e50 = ta.ema(close, 50), e100 = ta.ema(close, 100), e200 = ta.ema(close, 200)
+s5 = ta.sma(close, 5),   s200 = ta.sma(close, 200)
+[macdL, macdS, macdH] = ta.macd(close, 12, 26, 9)
+rsi14 = ta.rsi(close, 14), rsi2 = ta.rsi(close, 2)
+k = ta.sma(ta.stoch(close, high, low, 14), 1), d = ta.sma(k, 3)
+cci20 = ta.cci(hlc3, 20)
+wpr = ta.wpr(14)
+bbBasis = ta.sma(close, 20), bbDev = 2.0 * ta.stdev(close, 20)
+bbUp = bbBasis + bbDev, bbLo = bbBasis - bbDev
+kUp = e20 + 2 * ta.atr(10), kLo = e20 - 2 * ta.atr(10)
+dh20 = ta.highest(high, 20)[1], dl20 = ta.lowest(low, 20)[1]
+dh10 = ta.highest(high, 10)[1], dl10 = ta.lowest(low, 10)[1]
+dh55 = ta.highest(high, 55)[1], dl55 = ta.lowest(low, 55)[1]
+zs = (close - ta.sma(close, 50)) / ta.stdev(close, 50)
+[stLine, stDir] = ta.supertrend(3.0, 10)          // stDir < 0 => yuqoriga trend (Pine qoidasi)
+sar = ta.sar(0.02, 0.02, 0.2)
+sarUp = close > sar
+[diP, diM, adx] = ta.dmi(14, 14)
+conv = math.avg(ta.highest(high, 9), ta.lowest(low, 9))
+base = math.avg(ta.highest(high, 26), ta.lowest(low, 26))
+spanA = math.avg(conv, base)[26]
+spanB = math.avg(ta.highest(high, 52), ta.lowest(low, 52))[26]
+t3 = ta.ema(ta.ema(ta.ema(close, 15), 15), 15)
+trix = (t3 - t3[1]) / t3[1] * 100
+haClose = (open + high + low + close) / 4
+var float haOpen = na
+haOpen := na(haOpen[1]) ? open : (haOpen[1] + haClose[1]) / 2
+haGreen = haClose > haOpen
+rnd = math.random()
+
+// ------------------------------------------------------------------ signal tanlash
+bool longSig = false, bool shortSig = false, bool exitL = false, bool exitS = false
+bool useTP = true
+float slMult = slMultIn
+float trailMult = 0.0
+int timeStop = timeStopIn
+
+if strat == "ema_cross_9_21"
+    longSig := ta.crossover(e9, e21),  shortSig := ta.crossunder(e9, e21)
+    exitL := ta.crossunder(e9, e21),   exitS := ta.crossover(e9, e21),  useTP := false, timeStop := 100000
+else if strat == "golden_death_cross_50_200"
+    longSig := ta.crossover(e50, e200), shortSig := ta.crossunder(e50, e200)
+    exitL := ta.crossunder(e50, e200),  exitS := ta.crossover(e50, e200), useTP := false, slMult := 3, timeStop := 100000
+else if strat == "ema200_trend_ema20_pullback"
+    longSig := close > e200 and ta.crossover(close, e20), shortSig := close < e200 and ta.crossunder(close, e20)
+    slMult := 1.5, timeStop := 32
+else if strat == "chandelier_exit_trend"
+    longSig := ta.crossover(close, e50), shortSig := ta.crossunder(close, e50)
+    useTP := false, slMult := 3, trailMult := 3, timeStop := 100000
+else if strat == "macd_signal_cross"
+    longSig := ta.crossover(macdL, macdS), shortSig := ta.crossunder(macdL, macdS)
+    exitL := ta.crossunder(macdL, macdS),  exitS := ta.crossover(macdL, macdS), useTP := false
+else if strat == "macd_zero_line"
+    longSig := ta.crossover(macdL, 0), shortSig := ta.crossunder(macdL, 0)
+    exitL := ta.crossunder(macdL, 0),  exitS := ta.crossover(macdL, 0), useTP := false
+else if strat == "trix_zero_cross"
+    longSig := ta.crossover(trix, 0), shortSig := ta.crossunder(trix, 0)
+    exitL := ta.crossunder(trix, 0),  exitS := ta.crossover(trix, 0), useTP := false
+else if strat == "rsi14_30_70_reversal"
+    longSig := ta.crossover(rsi14, 30), shortSig := ta.crossunder(rsi14, 70)
+    exitL := rsi14 > 50, exitS := rsi14 < 50, useTP := false, timeStop := 64
+else if strat == "connors_rsi2_sma200"
+    longSig := close > s200 and rsi2 < 10, shortSig := close < s200 and rsi2 > 90
+    exitL := close > s5, exitS := close < s5, useTP := false, slMult := 3, timeStop := 40
+else if strat == "stochastic_20_80_cross"
+    longSig := ta.crossover(k, d) and k < 20, shortSig := ta.crossunder(k, d) and k > 80
+    exitL := k > 80, exitS := k < 20, useTP := false, timeStop := 48
+else if strat == "cci_100_reversal"
+    longSig := ta.crossover(cci20, -100), shortSig := ta.crossunder(cci20, 100)
+    exitL := cci20 > 0, exitS := cci20 < 0, useTP := false, timeStop := 48
+else if strat == "williams_r_reversal"
+    longSig := ta.crossover(wpr, -80), shortSig := ta.crossunder(wpr, -20)
+    exitL := wpr > -50, exitS := wpr < -50, useTP := false, timeStop := 48
+else if strat == "bollinger_meanrev_20_2"
+    longSig := close < bbLo, shortSig := close > bbUp
+    exitL := close >= bbBasis, exitS := close <= bbBasis, useTP := false, timeStop := 32
+else if strat == "keltner_breakout"
+    longSig := ta.crossover(close, kUp), shortSig := ta.crossunder(close, kLo)
+    exitL := close < e20, exitS := close > e20, useTP := false
+else if strat == "turtle_donchian_20_10"
+    longSig := close > dh20, shortSig := close < dl20
+    exitL := close < dl10, exitS := close > dh10, useTP := false, timeStop := 100000
+else if strat == "turtle_donchian_55_20"
+    longSig := close > dh55, shortSig := close < dl55
+    exitL := close < dl20, exitS := close > dh20, useTP := false, timeStop := 100000
+else if strat == "zscore_meanrev_2"
+    longSig := zs < -2, shortSig := zs > 2
+    exitL := zs > 0, exitS := zs < 0, useTP := false, slMult := 3, timeStop := 64
+else if strat == "supertrend_10_3"
+    longSig := stDir < 0 and stDir[1] > 0, shortSig := stDir > 0 and stDir[1] < 0
+    exitL := stDir > 0, exitS := stDir < 0, useTP := false, slMult := 3, timeStop := 100000
+else if strat == "parabolic_sar_flip"
+    longSig := sarUp and not sarUp[1], shortSig := not sarUp and sarUp[1]
+    exitL := not sarUp, exitS := sarUp, useTP := false, slMult := 3, timeStop := 100000
+else if strat == "adx25_dmi_cross"
+    longSig := adx > 25 and ta.crossover(diP, diM), shortSig := adx > 25 and ta.crossunder(diP, diM)
+    exitL := ta.crossunder(diP, diM), exitS := ta.crossover(diP, diM), useTP := false
+else if strat == "ichimoku_tk_cross_cloud"
+    longSig := ta.crossover(conv, base) and close > math.max(spanA, spanB)
+    shortSig := ta.crossunder(conv, base) and close < math.min(spanA, spanB)
+    exitL := ta.crossunder(conv, base), exitS := ta.crossover(conv, base), useTP := false, slMult := 3
+else if strat == "heikin_ashi_color_change"
+    longSig := haGreen and haGreen[1] and not haGreen[2], shortSig := not haGreen and not haGreen[1] and haGreen[2]
+    exitL := not haGreen and not haGreen[1], exitS := haGreen and haGreen[1], useTP := false
+else if strat == "control_random_entry"
+    longSig := rnd < 0.02, shortSig := rnd > 0.98, timeStop := 48
+
+// ------------------------------------------------------------------ kunlik limit va ijro
+inWindow = time >= inFrom and time <= inTo
+var int tradesToday = 0
+if ta.change(time("D")) != 0
+    tradesToday := 0
+flat = strategy.position_size == 0
+if not flat and flat[1]
+    tradesToday += 1
+
+var float slPx = na, var float tpPx = na, var float extreme = na
+slDist = slMult * atr14
+tpDist = tpMultIn * atr14
+canEnter = flat and inWindow and tradesToday < maxPerDay and not na(atr14) and slDist > 0
+riskAmt = strategy.equity * riskPct / 100
+notional = math.min(riskAmt / (slDist / close), strategy.equity * lev)
+qty = notional / close
+
+if canEnter and longSig and allowLong
+    strategy.entry("L", strategy.long, qty=qty)
+    slPx := close - slDist, tpPx := useTP ? close + tpDist : na, extreme := high
+else if canEnter and shortSig and allowShort
+    strategy.entry("S", strategy.short, qty=qty)
+    slPx := close + slDist, tpPx := useTP ? close - tpDist : na, extreme := low
+
+if strategy.position_size > 0
+    if trailMult > 0
+        extreme := math.max(extreme, high), slPx := math.max(slPx, extreme - trailMult * atr14)
+    strategy.exit("XL", "L", stop=slPx, limit=tpPx)
+    barsIn = bar_index - strategy.opentrades.entry_bar_index(0)
+    if exitL or barsIn >= timeStop
+        strategy.close("L", comment=exitL ? "EXIT" : "TIME")
+if strategy.position_size < 0
+    if trailMult > 0
+        extreme := math.min(extreme, low), slPx := math.min(slPx, extreme + trailMult * atr14)
+    strategy.exit("XS", "S", stop=slPx, limit=tpPx)
+    barsIn = bar_index - strategy.opentrades.entry_bar_index(0)
+    if exitS or barsIn >= timeStop
+        strategy.close("S", comment=exitS ? "EXIT" : "TIME")
+
+plot(strategy.position_size != 0 ? slPx : na, "SL", color=color.red, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tpPx : na, "TP", color=color.green, style=plot.style_linebr)

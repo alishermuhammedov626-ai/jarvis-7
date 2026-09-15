@@ -16,6 +16,27 @@ python3 run_zoo.py --charts 30 --val-charts 40 --leverage 3 --fee 0.0005     # ~
 python3 run_futures_live.py --strategy bollinger_meanrev_20_2 --leverage 3 --dry-run 1   # testnet dry-run
 ```
 
+## TradingView bilan ishlash (real ma'lumot)
+
+Bu muhitdan TradingView/Binance ga tarmoq yopiq, shuning uchun real ma'lumot ikki yo'l bilan olinadi:
+
+**1-yo'l: Pine Script — TradingView'ning o'zida sinash.** `tradingview/strategy_zoo.pine` faylini Pine Editor'ga
+joylashtiring, "Add to chart", grafik: `BINANCE:BTCUSDT.P`, 15m. Sozlamalardan strategiyani tanlang (23 ta),
+Strategy Tester natijani ko'rsatadi. Sozlamalar Python backtester bilan bir xil: 0.05% komissiya, 3x, kuniga
+max 4 kirish, SL 2 ATR, TP 3 ATR, 1% risk. **Muhim:** "Sinov boshi/oxiri" sanalarini ikkiga bo'ling
+(masalan 2023 = qidiruv, 2024-2025 = tasdiqlash) va faqat ikkalasida ham foydali bo'lganini hisobga oling.
+`control_random_entry` ni ham ishga tushiring: agar u ham "foydali" chiqsa, davr tasodifan qulay bo'lgan.
+
+**2-yo'l: CSV eksport — 43 strategiyani shu yerda walk-forward sinash.** TradingView grafigida
+o'ng yuqori menyu -> "Export chart data..." (pullik tarifda), 15m, iloji boricha uzoq tarix. Yoki
+Binance klines CSV (`data.binance.vision`, sarlavhasiz ham bo'ladi). Keyin:
+
+```bash
+python3 run_zoo.py --csv BINANCE_BTCUSDT.P_15.csv --window-days 30 --leverage 3 --fee 0.0005
+```
+Tarix 30 kunlik oynalarga bo'linadi: birinchi 60% qidiruv, keyingi 20% va oxirgi 20% tasdiqlash (out-of-sample).
+Natija `reports/real_results.md`. Tasodifiy nazorat ham o'tsa, hisobot ogohlantiradi. 24+ oyna (2+ yil) tavsiya.
+
 ---
 
 # Spot (halol) rejimi
