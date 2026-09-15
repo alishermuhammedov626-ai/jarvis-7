@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 from typing import Protocol
 
+import numpy as np
 import pandas as pd
 
 from ..models import MarketQuality
@@ -110,6 +111,7 @@ class HistoricalDataSource:
         self.base_tf = base_tf
         self.base = {s: df.sort_index() for s, df in base.items()}
         self._resampled: dict[tuple[str, str], pd.DataFrame] = {}
+        self._close_ns: dict[tuple[str, str], np.ndarray] = {}
         self._quality = quality or {}
         self.spread_bps = spread_bps
 
@@ -117,16 +119,31 @@ class HistoricalDataSource:
         key = (symbol, timeframe)
         if key not in self._resampled:
             src = self.base[symbol]
-            self._resampled[key] = src if timeframe == self.base_tf else resample(src, timeframe)
+            df = src if timeframe == self.base_tf else resample(src, timeframe)
+            self._resampled[key] = df
+            # candle close times (ns) for O(log n) slicing
+            self._close_ns[key] = (df.index.as_unit("ns").asi8 + TF_SECONDS[timeframe] * 1_000_000_000)
         return self._resampled[key]
+
+    @staticmethod
+    def _ns(now: datetime) -> int:
+        ts = pd.Timestamp(now)
+        ts = ts.tz_convert("UTC") if ts.tzinfo else ts.tz_localize("UTC")
+        return int(ts.as_unit("ns").value)
 
     def ohlcv(self, symbol: str, timeframe: str, limit: int, now: datetime) -> pd.DataFrame:
         df = self._frame(symbol, timeframe)
-        cutoff = pd.Timestamp(now) if pd.Timestamp(now).tzinfo else pd.Timestamp(now, tz="UTC")
-        secs = TF_SECONDS[timeframe]
         # only candles whose close time <= now
-        closed = df[df.index + pd.Timedelta(seconds=secs) <= cutoff]
-        return closed.iloc[-limit:]
+        pos = int(np.searchsorted(self._close_ns[(symbol, timeframe)], self._ns(now), side="right"))
+        return df.iloc[max(0, pos - limit):pos]
+
+    def candles_between(self, symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
+        """Base-TF candles with open time in [start, end)."""
+        df = self._frame(symbol, self.base_tf)
+        idx = df.index.as_unit("ns").asi8
+        a = int(np.searchsorted(idx, self._ns(start), side="left"))
+        b = int(np.searchsorted(idx, self._ns(end), side="left"))
+        return df.iloc[a:b]
 
     def quality(self, symbol: str, now: datetime) -> MarketQuality:
         if symbol in self._quality:

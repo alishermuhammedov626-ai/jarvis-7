@@ -12,6 +12,7 @@ def detect_sweep(
     side: Side,
     lookback: int = 36,
     reclaim_within: int = 6,
+    min_depth: float = 0.0,
 ) -> Sweep | None:
     """Find the most recent sweep that sets up a trade in ``side`` direction.
 
@@ -57,6 +58,9 @@ def detect_sweep(
             seg_low = lows[i:reclaim + 1].min()
             seg_high = highs[i:reclaim + 1].max()
             extreme = float(seg_low if side is Side.LONG else seg_high)
+            if abs(extreme - lv.price) < min_depth:   # too shallow to be a real sweep
+                i = reclaim + 1
+                continue
             sw = Sweep(lv, side, i, reclaim, extreme, index[reclaim])
             if best is None or sw.reclaim_idx > best.reclaim_idx:
                 best = sw

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 import signal as os_signal
 import time
 from datetime import datetime, timezone
@@ -45,6 +46,7 @@ class SmcScalperBot:
             fee_bps=cfg.exchange.fee_bps,
         )
         self._seen: set[str] = set()
+        self.skipped: Counter[str] = Counter()   # signals dropped at sizing / depth checks
         self._running = True
         self._equity_cache = 0.0
 
@@ -150,18 +152,23 @@ class SmcScalperBot:
         stop_bps = sig.risk_per_unit / sig.entry * 10_000.0
         if stop_bps < self.cfg.risk.min_stop_to_cost_ratio * cost_bps:
             log.info("%s: stop %.1fbps too tight vs cost %.1fbps, skipped", sig.symbol, stop_bps, cost_bps)
+            self.skipped["stop_too_tight_vs_cost"] += 1
             return
         qty = position_size(self._equity_cache, self.cfg.risk.risk_per_trade_pct,
                             sig.entry, sig.stop_loss, spec, self.cfg.risk.leverage, cost_bps)
         if qty <= 0:
             log.info("%s: cannot size position within limits, skipped", sig.symbol)
+            self.skipped["cannot_size"] += 1
             return
         if not order_fits_depth(qty * sig.entry, mq, self.cfg.market):
             log.info("%s: order notional too large for book depth, skipped", sig.symbol)
+            self.skipped["exceeds_depth"] += 1
             return
         log.info("SIGNAL %s | tp1 from %s, tp2 from %s", sig.summary(),
                  sig.meta.get("tp1_source"), sig.meta.get("tp2_source"))
-        self.manager.submit(sig, qty)
+        # 1R = the full budget: price distance + round-trip costs on the notional
+        risk_usd = qty * (sig.risk_per_unit + sig.entry * cost_bps / 10_000.0)
+        self.manager.submit(sig, qty, risk_usd)
         self.governor.register_open(now, self._equity_cache)
         self._save_governor()
 

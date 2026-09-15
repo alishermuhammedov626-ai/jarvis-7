@@ -64,11 +64,13 @@ def zone_still_valid(df: pd.DataFrame, zone: Zone) -> bool:
     return bool((after["close"] < zone.high).all())
 
 
-def select_zone(df: pd.DataFrame, mss: MSS, fvg_min_size: float) -> Zone | None:
-    """Prefer FVG, fall back to OB."""
+def select_zone(df: pd.DataFrame, mss: MSS, fvg_min_size: float, allow_ob: bool = True) -> Zone | None:
+    """Prefer FVG, fall back to OB (if allowed)."""
     z = find_fvg(df, mss, fvg_min_size)
     if z is not None and zone_still_valid(df, z):
         return z
+    if not allow_ob:
+        return None
     z = find_ob(df, mss)
     if z is not None and zone_still_valid(df, z):
         return z

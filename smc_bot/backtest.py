@@ -58,20 +58,56 @@ def run_backtest(cfg: BotConfig, base: dict[str, pd.DataFrame], step_tf: str = "
         now += timedelta(minutes=step)
 
     trades = [t for t in bot.manager.trades.values() if t.state is TradeState.CLOSED]
+    cancelled = sum(1 for t in bot.manager.trades.values() if t.state is TradeState.CANCELLED)
+    stats = summarize(trades, equity_curve, cfg.exchange.paper_equity)
+    stats.update({"cancelled": cancelled, "equity_curve": equity_curve, "trade_list": trades,
+                  "final_equity": paper.equity(), "funnel": dict(bot.engine.funnel),
+                  "skipped": dict(bot.skipped)})
+    return stats
+
+
+def summarize(trades: list, equity_curve: list | None = None, start_equity: float = 0.0) -> dict:
+    """Performance statistics.
+
+    * win_rate      : share of closed trades with net PnL > 0
+    * tp1_hit_rate  : share of closed trades in which TP1 was reached
+                      (the "win" definition of the TP1 -> break-even model)
+    * expectancy_r  : mean R multiple per trade (risk = 1R = 1% of equity)
+    """
+    n = len(trades)
     wins = [t for t in trades if t.realized_pnl > 0]
     losses = [t for t in trades if t.realized_pnl <= 0]
     gross_win = sum(t.realized_pnl for t in wins)
     gross_loss = -sum(t.realized_pnl for t in losses)
+    rs = [t.r_multiple for t in trades]
+    max_dd = 0.0
+    if equity_curve:
+        peak = -float("inf")
+        for _, eq in equity_curve:
+            peak = max(peak, eq)
+            max_dd = max(max_dd, (peak - eq) / peak * 100.0 if peak > 0 else 0.0)
     return {
-        "trades": len(trades),
-        "cancelled": sum(1 for t in bot.manager.trades.values() if t.state is TradeState.CANCELLED),
-        "win_rate": len(wins) / len(trades) if trades else 0.0,
-        "profit_factor": gross_win / gross_loss if gross_loss > 0 else float("inf"),
+        "trades": n,
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": len(wins) / n if n else 0.0,
+        "tp1_hit_rate": sum(1 for t in trades if t.tp1_hit) / n if n else 0.0,
+        "full_tp2_rate": sum(1 for t in trades if t.close_reason == "tp2") / n if n else 0.0,
+        "profit_factor": gross_win / gross_loss if gross_loss > 0 else (float("inf") if gross_win > 0 else 0.0),
+        "expectancy_r": sum(rs) / n if n else 0.0,
+        "avg_win_r": sum(t.r_multiple for t in wins) / len(wins) if wins else 0.0,
+        "avg_loss_r": sum(t.r_multiple for t in losses) / len(losses) if losses else 0.0,
         "net_pnl": sum(t.realized_pnl for t in trades),
-        "final_equity": paper.equity(),
-        "equity_curve": equity_curve,
-        "trade_list": trades,
+        "net_return_pct": sum(t.realized_pnl for t in trades) / start_equity * 100 if start_equity else 0.0,
+        "max_drawdown_pct": max_dd,
     }
+
+
+def format_stats(res: dict) -> str:
+    return (f"trades={res['trades']} cancelled={res.get('cancelled', 0)} "
+            f"win_rate={res['win_rate']:.1%} tp1_hit={res['tp1_hit_rate']:.1%} "
+            f"PF={res['profit_factor']:.2f} exp={res['expectancy_r']:+.2f}R "
+            f"net={res['net_pnl']:+.2f} ({res['net_return_pct']:+.1f}%) maxDD={res['max_drawdown_pct']:.1f}%")
 
 
 def main() -> None:
@@ -87,11 +123,13 @@ def main() -> None:
         sym, path = item.split("=", 1)
         base[sym] = load_csv(path)
     res = run_backtest(cfg, base, warmup_hours=args.warmup_hours)
-    print(f"trades={res['trades']} cancelled={res['cancelled']} win_rate={res['win_rate']:.1%} "
-          f"PF={res['profit_factor']:.2f} net={res['net_pnl']:.2f} equity={res['final_equity']:.2f}")
+    print(format_stats(res))
+    print("rejection funnel:", ", ".join(f"{k}={v}" for k, v in sorted(res["funnel"].items(), key=lambda kv: -kv[1])))
+    if res["skipped"]:
+        print("skipped at sizing:", ", ".join(f"{k}={v}" for k, v in res["skipped"].items()))
     for t in res["trade_list"]:
         print(f"  {t.created_at:%Y-%m-%d %H:%M} {t.symbol:6} {t.side.value:5} entry={t.avg_entry:.8g} "
-              f"sl={t.stop_loss:.8g} pnl={t.realized_pnl:+.2f} ({t.close_reason})")
+              f"R={t.r_multiple:+.2f} pnl={t.realized_pnl:+.2f} ({t.close_reason})")
 
 
 if __name__ == "__main__":

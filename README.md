@@ -9,7 +9,7 @@ Python 3.10+, `ccxt` (USDT-M perpetual futures, standart: Binance USDⓈ-M),
 
 ```
 pip install -r requirements.txt
-python -m pytest -q                      # 28 ta test
+python -m pytest -q                      # 39 ta test
 python -m smc_bot --config config.example.json          # paper (simulyatsiya) rejimi
 EXCHANGE_API_KEY=... EXCHANGE_API_SECRET=... \
 python -m smc_bot --config config.example.json --live   # haqiqiy orderlar
@@ -236,7 +236,66 @@ profit factor, net PnL, equity egri chizig'i.
 
 ---
 
-## 8. Ishga tushirish (24/7)
+## 8. Win rate'ni oshirish (60%+ maqsadi)
+
+Win rate **faqat real ma'lumotda o'lchanadi va sozlanadi**. Bu repoda buning
+uchun uchta vosita bor.
+
+### 8.1 Sifat filtrlari (`AnalysisConfig`)
+
+Har biri chastotani kamaytirib, sifatni oshiradi:
+
+| Parametr | Ta'siri |
+|---|---|
+| `require_h1_confirm` | H1 ham H4 bilan bir yo'nalishda bo'lishi shart (neytral yetmaydi) |
+| `require_major_sweep` | faqat PDH/PDL va sessiya H/L sweep'lari (EQH/EQL emas) |
+| `min_sweep_depth_atr` | wick darajadan kamida shuncha ATR o'tishi kerak (shovqin emas, haqiqiy sweep) |
+| `displacement_atr_mult` | 1.5–2.0: faqat kuchli impulslar |
+| `allow_ob_fallback=false` | faqat FVG, OB bilan kirilmaydi |
+| `max_setup_age_candles` | MSS dan keyin N sham ichida kirilmasa setup eskiradi |
+| `trade_windows` | faqat London (07–11) va NY (12–17 UTC) "kill zone" larida kirish |
+| `tp1_mode="fixed"`, `tp1_fixed_rr=1.0`, `tp1_share=0.6` | TP1 = 1R da 60%, keyin BE: "g'alaba" tezroq qayd etiladi, TP2 baribir ≥ 2R |
+
+`profiles/high_winrate.json` shu filtrlarning tayyor kombinatsiyasi:
+
+```
+python -m smc_bot.backtest --config profiles/high_winrate.json --csv DOGE=data/doge_1m.csv ...
+```
+
+### 8.2 Voronka diagnostikasi
+
+Backtest oxirida `rejection funnel` chiqadi: nechta baholash `bias_neutral`,
+`5m:no_sweep`, `5m:no_displacement_mss`, `5m:no_zone`, `5m:rr_too_low` va h.k.
+bosqichida to'xtagani. Qaysi filtr setuplarni "yeb qo'yayotgani"ni ko'rsatadi.
+
+### 8.3 Walk-forward optimizator
+
+```
+python -m smc_bot.optimize --csv DOGE=data/doge_1m.csv --csv PEPE=data/pepe_1m.csv \
+    --csv WIF=data/wif_1m.csv --trials 150 --target-winrate 0.60 --min-trades 30 \
+    --oos-fraction 0.3 --workers 4 --out best_config.json
+```
+
+1. Tarix in-sample (70%) / out-of-sample (30%) ga bo'linadi.
+2. 150 ta tasodifiy parametr to'plami in-sample'da sinaladi. `win_rate ≥ 60%`
+   va `trades ≥ 30` bo'lganlar orasidan eng yuqori R-kutilma tanlanadi.
+3. Eng yaxshi 5 tasi out-of-sample'da qayta tekshiriladi. **Faqat OOS da ham
+   60% ni ushlab qolgan** to'plam `best_config.json` ga yoziladi; qolganlari
+   "overfit" deb belgilanadi.
+
+Agar hech bir to'plam OOS da 60% ga chiqmasa, dastur buni ochiq aytadi. Bunday
+holatda parametrlarni qo'lda "60% ga sozlash" o'z-o'zini aldash bo'ladi:
+ko'proq ma'lumot yig'ing (kamida 90 kun, 6 juftlik) yoki maqsadni R-kutilma
+bo'yicha qo'ying (win rate 45% + 2.25R ham foydali tizim).
+
+### 8.4 "G'alaba" ta'rifi
+
+Backtest ikkita ko'rsatkichni beradi: `win_rate` (sof PnL > 0) va
+`tp1_hit_rate` (TP1 ga yetgan, keyin BE dan chiqqan savdolar ham kiradi).
+TP1 = 1R / 60% modelida ikkinchisi birinchisidan yuqori bo'ladi; 60% maqsadini
+qaysi ta'rifda qo'yayotganingizni aniq belgilang.
+
+## 9. Ishga tushirish (24/7)
 
 ```
 # systemd misoli
@@ -252,7 +311,7 @@ RestartSec=10
 Tavsiya etilgan tartib: **1)** `paper: true` bilan kamida 2 hafta;
 **2)** `sandbox: true` (testnet); **3)** minimal depozit bilan live.
 
-## 9. Cheklovlar / ogohlantirish
+## 10. Cheklovlar / ogohlantirish
 
 - Bu dasturiy ta'minot moliyaviy maslahat emas; memecoin fyuchers savdosi yuqori
   riskli. Kod real pul bilan ishlatilishidan oldin sizning tomoningizdan

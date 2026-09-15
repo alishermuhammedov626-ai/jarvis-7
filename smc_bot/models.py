@@ -211,3 +211,9 @@ class Trade:
     closed_at: Optional[datetime] = None
     close_reason: str = ""
     signal_summary: str = ""
+    risk_usd: float = 0.0
+    tp1_hit: bool = False
+
+    @property
+    def r_multiple(self) -> float:
+        return self.realized_pnl / self.risk_usd if self.risk_usd > 0 else 0.0

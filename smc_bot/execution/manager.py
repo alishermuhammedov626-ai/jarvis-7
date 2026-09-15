@@ -89,7 +89,7 @@ class PositionManager:
 
     # ------------------------------------------------------------------ #
     # entry
-    def submit(self, sig: Signal, qty: float) -> Trade:
+    def submit(self, sig: Signal, qty: float, risk_usd: float | None = None) -> Trade:
         spec = self.ex.market_spec(sig.symbol)
         self.ex.set_leverage(sig.symbol, self.rcfg.leverage, self.rcfg.margin_mode)
         entry_id = self.ex.place_limit(sig.symbol, sig.side, qty, sig.entry)
@@ -99,6 +99,7 @@ class PositionManager:
             entry=sig.entry, stop_loss=sig.stop_loss, tp1=sig.tp1, tp2=sig.tp2, atr=sig.atr,
             state=TradeState.PENDING, created_at=sig.created_at, expires_at=sig.expires_at,
             entry_order_id=entry_id, signal_summary=sig.summary(),
+            risk_usd=risk_usd if risk_usd is not None else qty * sig.risk_per_unit,
         )
         self.trades[t.id] = t
         self.save()
@@ -150,7 +151,7 @@ class PositionManager:
         t.avg_entry = avg
         close_side = t.side.opposite
         t.sl_order_id = self.ex.place_stop_market(t.symbol, close_side, qty, t.stop_loss)
-        q1, q2 = split_tp_quantities(qty, spec)
+        q1, q2 = split_tp_quantities(qty, spec, self.acfg.tp1_share)
         if q1 > 0:
             t.tp1_order_id = self.ex.place_take_profit_market(t.symbol, close_side, q1, t.tp1)
         t.tp2_order_id = self.ex.place_take_profit_market(t.symbol, close_side, q2, t.tp2)
@@ -175,6 +176,7 @@ class PositionManager:
             if tp1.status == "filled":
                 t.realized_pnl += self._pnl(t, tp1.avg_price, tp1.filled)
                 t.remaining_qty = round_step(t.remaining_qty - tp1.filled, self.ex.market_spec(t.symbol).amount_step)
+                t.tp1_hit = True
                 if tp2.status == "filled":  # both hit within the same poll
                     self._close(t, now, tp2.avg_price, tp2.filled, "tp2", already_counted=True)
                     return
@@ -256,7 +258,7 @@ class PositionManager:
         t.closed_at = now
         t.close_reason = reason
         log.info("CLOSED %s %s pnl=%.4f (%s)", t.id, t.symbol, t.realized_pnl, reason)
-        if hasattr(self.ex, "apply_pnl"):
+        if getattr(self.ex, "paper_mode", False):
             self.ex.apply_pnl(t.realized_pnl)
         if self.on_close:
             self.on_close(t)

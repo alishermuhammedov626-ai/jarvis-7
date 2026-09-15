@@ -1,0 +1,35 @@
+{
+  "analysis": {
+    "require_h1_confirm": true,
+    "require_major_sweep": true,
+    "min_sweep_depth_atr": 0.25,
+    "displacement_atr_mult": 1.5,
+    "allow_ob_fallback": false,
+    "max_setup_age_candles": 6,
+    "entry_zone_ratio": 0.25,
+    "entry_ttl_minutes": 45,
+    "sl_atr_buffer": 0.5,
+    "tp1_mode": "fixed",
+    "tp1_fixed_rr": 1.0,
+    "tp1_share": 0.6,
+    "min_rr_tp2": 2.0,
+    "tp2_fixed_rr": 2.5,
+    "trail_atr_mult": 1.0,
+    "trade_windows": [
+      {"name": "london", "start_hour": 7, "end_hour": 11},
+      {"name": "newyork", "start_hour": 12, "end_hour": 17}
+    ]
+  },
+  "risk": {
+    "risk_per_trade_pct": 1.0,
+    "max_open_positions": 2,
+    "max_trades_per_day": 4,
+    "daily_loss_limit_pct": 2.0,
+    "min_stop_to_cost_ratio": 4.0
+  },
+  "market": {
+    "max_spread_bps": 4.0,
+    "min_quote_volume_24h": 100000000,
+    "min_depth_notional": 300000
+  }
+}

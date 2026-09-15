@@ -77,6 +77,26 @@ class AnalysisConfig:
     # SL buffer: ATR * this
     sl_atr_buffer: float = 0.5
 
+    # ---- quality filters (each raises win rate at the cost of frequency) ----
+    # H1 must actively agree with H4 (not merely "not contradict")
+    require_h1_confirm: bool = False
+    # only PDH/PDL and session highs/lows count as sweepable liquidity
+    require_major_sweep: bool = False
+    # wick must exceed the level by at least this many ATR (filters noise)
+    min_sweep_depth_atr: float = 0.0
+    # MSS candle must be at most this many candles old when the order is placed
+    max_setup_age_candles: int = 12
+    # allow OB when no valid FVG exists
+    allow_ob_fallback: bool = True
+    # UTC windows in which new entries may be placed; empty = 24/7
+    trade_windows: list[SessionWindow] = field(default_factory=list)
+
+    # ---- take-profit structure ----
+    # "liquidity": TP1 = nearest opposing level; "fixed": TP1 = tp1_fixed_rr
+    tp1_mode: str = "liquidity"
+    tp1_fixed_rr: float = 1.0
+    tp1_share: float = 0.5   # share of the position closed at TP1
+
     # R:R rules
     min_rr_tp1: float = 1.0
     min_rr_tp2: float = 2.0
@@ -164,7 +184,7 @@ def _merge(dc: Any, data: dict[str, Any]) -> Any:
         current = getattr(dc, f.name)
         if is_dataclass(current) and isinstance(value, dict):
             _merge(current, value)
-        elif f.name == "sessions" and isinstance(value, list):
+        elif f.name in ("sessions", "trade_windows") and isinstance(value, list):
             setattr(dc, f.name, [SessionWindow(**s) for s in value])
         else:
             setattr(dc, f.name, value)

@@ -28,15 +28,17 @@ def detect_bias(df: pd.DataFrame, left: int = 2, right: int = 2) -> Bias:
     return Bias.NEUTRAL
 
 
-def global_bias(df_h4: pd.DataFrame, df_h1: pd.DataFrame, left: int = 2, right: int = 2) -> Bias:
+def global_bias(df_h4: pd.DataFrame, df_h1: pd.DataFrame, left: int = 2, right: int = 2,
+                require_h1_confirm: bool = False) -> Bias:
     """H4 sets the direction; H1 may only confirm or stay neutral.
 
-    If H1 structure contradicts H4 we stand aside (NEUTRAL).
+    If H1 structure contradicts H4 we stand aside (NEUTRAL).  With
+    ``require_h1_confirm`` H1 must actively agree.
     """
     b4 = detect_bias(df_h4, left, right)
     if b4 is Bias.NEUTRAL:
         return Bias.NEUTRAL
     b1 = detect_bias(df_h1, left, right)
-    if b1 is not Bias.NEUTRAL and b1 is not b4:
+    if b1 is not b4 and (require_h1_confirm or b1 is not Bias.NEUTRAL):
         return Bias.NEUTRAL
     return b4

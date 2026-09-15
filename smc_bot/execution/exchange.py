@@ -167,6 +167,8 @@ class PaperExchange:
     assumed to fill first (conservative).
     """
 
+    paper_mode = True
+
     def __init__(self, equity: float, slippage_bps: float = 8.0, fee_bps: float = 4.0,
                  specs: dict[str, MarketSpec] | None = None):
         self._equity = equity

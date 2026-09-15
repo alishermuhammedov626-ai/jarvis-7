@@ -38,38 +38,40 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.ewm(alpha=1.0 / period, adjust=False, min_periods=1).mean()
 
 
+def _fractal(values: np.ndarray, left: int, right: int, high: bool) -> np.ndarray:
+    n = len(values)
+    out = np.zeros(n, dtype=bool)
+    width = left + right + 1
+    if n < width:
+        return out
+    w = np.lib.stride_tricks.sliding_window_view(values, width)
+    center = w[:, left]
+    if high:
+        mask = (center > w[:, :left].max(axis=1)) & (center > w[:, left + 1:].max(axis=1))
+    else:
+        mask = (center < w[:, :left].min(axis=1)) & (center < w[:, left + 1:].min(axis=1))
+    out[left:n - right] = mask
+    return out
+
+
 def swing_highs(df: pd.DataFrame, left: int = 2, right: int = 2) -> pd.Series:
     """Boolean series: candle high is strictly higher than ``left`` candles
     before and ``right`` candles after it (confirmed fractal)."""
-    h = df["high"].to_numpy()
-    n = len(h)
-    out = np.zeros(n, dtype=bool)
-    for i in range(left, n - right):
-        window_left = h[i - left:i]
-        window_right = h[i + 1:i + 1 + right]
-        if h[i] > window_left.max() and h[i] > window_right.max():
-            out[i] = True
-    return pd.Series(out, index=df.index)
+    return pd.Series(_fractal(df["high"].to_numpy(), left, right, True), index=df.index)
 
 
 def swing_lows(df: pd.DataFrame, left: int = 2, right: int = 2) -> pd.Series:
-    l = df["low"].to_numpy()
-    n = len(l)
-    out = np.zeros(n, dtype=bool)
-    for i in range(left, n - right):
-        window_left = l[i - left:i]
-        window_right = l[i + 1:i + 1 + right]
-        if l[i] < window_left.min() and l[i] < window_right.min():
-            out[i] = True
-    return pd.Series(out, index=df.index)
+    return pd.Series(_fractal(df["low"].to_numpy(), left, right, False), index=df.index)
 
 
 def swing_points(df: pd.DataFrame, left: int = 2, right: int = 2):
     """Return (list of (idx, high), list of (idx, low)) for confirmed swings."""
-    sh = swing_highs(df, left, right).to_numpy()
-    sl = swing_lows(df, left, right).to_numpy()
-    highs = [(i, float(df["high"].iloc[i])) for i in np.flatnonzero(sh)]
-    lows = [(i, float(df["low"].iloc[i])) for i in np.flatnonzero(sl)]
+    h = df["high"].to_numpy()
+    l = df["low"].to_numpy()
+    sh = _fractal(h, left, right, True)
+    sl = _fractal(l, left, right, False)
+    highs = [(int(i), float(h[i])) for i in np.flatnonzero(sh)]
+    lows = [(int(i), float(l[i])) for i in np.flatnonzero(sl)]
     return highs, lows
 
 
