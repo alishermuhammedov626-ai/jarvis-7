@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+reports/raw_results.csv
+reports/variants_raw.csv
+.env
