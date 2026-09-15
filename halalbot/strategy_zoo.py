@@ -636,3 +636,7 @@ def run_any(df, Zc, cfg):
 
 
 HIGHWR = [z for z in ZOO if z.family == "highwr"]
+
+
+from . import smc as _smc  # noqa: E402  (SMC strategiyalarini ro'yxatga qo'shadi)
+SMC = _smc.SMC

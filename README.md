@@ -28,6 +28,15 @@ python3 run_zoo.py --partial 1.0                    # istalgan to'plam qisman TP
 python3 run_partial_compare.py                      # oddiy vs qisman TP solishtiruv
 ```
 
+## Smart Money Concepts (SMC/ICT) botlari
+
+`halalbot/smc.py`: 8 causal SMC strategiya (FVG retest, order block retest, liquidity sweep, CHoCH, Silver Bullet,
+Turtle Soup, FVG+OB ballli confluence, OTE). `reports/SMC_XULOSA.md`: internetdagi ochiq manbalar tahlili
+(StatOasis 648 konfiguratsiya, GitHub botlari, da'volar) + o'z sinovimiz (3 600 backtest, 0 o'tdi, winrate 28-40%).
+```bash
+python3 run_zoo.py --family smc --charts 40
+```
+
 ## TradingView bilan ishlash (real ma'lumot)
 
 Bu muhitdan TradingView/Binance ga tarmoq yopiq, shuning uchun real ma'lumot ikki yo'l bilan olinadi:
