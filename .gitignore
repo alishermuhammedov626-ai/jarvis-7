@@ -7,3 +7,4 @@ reports/variants_raw.csv
 reports/**/*_raw.csv
 reports/*_raw.csv
 reports/mega/*_raw.csv
+reports/rr2/*_raw.csv
