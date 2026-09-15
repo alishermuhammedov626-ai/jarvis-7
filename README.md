@@ -9,7 +9,7 @@ Python 3.10+, `ccxt` (USDT-M perpetual futures, standart: Binance USDⓈ-M),
 
 ```
 pip install -r requirements.txt
-python -m pytest -q                      # 44 ta test
+python -m pytest -q                      # 48 ta test
 python -m smc_bot --config config.example.json          # paper (simulyatsiya) rejimi
 EXCHANGE_API_KEY=... EXCHANGE_API_SECRET=... \
 python -m smc_bot --config config.example.json --live   # haqiqiy orderlar
@@ -235,6 +235,14 @@ profit factor, net PnL, equity egri chizig'i.
 > ma'lumot ishlating va parametrlarni faqat out-of-sample davrda tasdiqlang.
 
 ---
+
+## 7.1 Tayyor profillar
+
+| Profil | Nima |
+|---|---|
+| `config.example.json` | asosiy: 2–4 savdo/kun, TP1 likvidlik 50% + TP2 3R |
+| `profiles/high_winrate.json` | qat'iy filtrlar, confirm kirish, TP1 = 1R 60% |
+| `profiles/two_trades_rr2.json` | **kuniga 2 savdo (London 1 + NY 1), bitta 2R nishon** — batafsil: `docs/STRATEGIYA_2_SAVDO_1_2.md` |
 
 ## 8. Win rate'ni oshirish (60%+ maqsadi)
 

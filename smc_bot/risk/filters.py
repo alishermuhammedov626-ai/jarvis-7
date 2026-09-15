@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from ..config import MarketFilterConfig, RiskConfig
+from ..config import MarketFilterConfig, RiskConfig, SessionWindow
 from ..models import MarketQuality, Signal
 
 
@@ -55,11 +55,13 @@ class TradeGovernor:
     persists / restores it through ``to_dict`` / ``from_dict``."""
 
     cfg: RiskConfig
+    windows: list[SessionWindow] = field(default_factory=list)
     day: str = ""
     trades_today: int = 0
     pnl_today: float = 0.0
     start_equity: float = 0.0
     last_close: dict[str, datetime] = field(default_factory=dict)
+    trades_by_window: dict[str, int] = field(default_factory=dict)
 
     def _roll_day(self, now: datetime, equity: float) -> None:
         day = now.strftime("%Y-%m-%d")
@@ -68,11 +70,22 @@ class TradeGovernor:
             self.trades_today = 0
             self.pnl_today = 0.0
             self.start_equity = equity
+            self.trades_by_window = {}
+
+    def _window(self, now: datetime) -> str:
+        for w in self.windows:
+            if w.start_hour <= now.hour < w.end_hour:
+                return w.name
+        return ""
 
     def can_trade(self, symbol: str, now: datetime, equity: float) -> tuple[bool, str]:
         self._roll_day(now, equity)
         if self.trades_today >= self.cfg.max_trades_per_day:
             return False, "daily trade cap reached"
+        if self.cfg.max_trades_per_window > 0:
+            w = self._window(now)
+            if w and self.trades_by_window.get(w, 0) >= self.cfg.max_trades_per_window:
+                return False, f"{w} window cap reached"
         if self.start_equity > 0:
             dd_pct = -self.pnl_today / self.start_equity * 100.0
             if dd_pct >= self.cfg.daily_loss_limit_pct:
@@ -85,6 +98,9 @@ class TradeGovernor:
     def register_open(self, now: datetime, equity: float) -> None:
         self._roll_day(now, equity)
         self.trades_today += 1
+        w = self._window(now)
+        if w:
+            self.trades_by_window[w] = self.trades_by_window.get(w, 0) + 1
 
     def register_close(self, symbol: str, pnl: float, now: datetime, equity: float) -> None:
         self._roll_day(now, equity)
@@ -98,12 +114,14 @@ class TradeGovernor:
             "pnl_today": self.pnl_today,
             "start_equity": self.start_equity,
             "last_close": {k: v.isoformat() for k, v in self.last_close.items()},
+            "trades_by_window": dict(self.trades_by_window),
         }
 
     @classmethod
-    def from_dict(cls, cfg: RiskConfig, d: dict) -> "TradeGovernor":
-        g = cls(cfg)
+    def from_dict(cls, cfg: RiskConfig, d: dict, windows: list[SessionWindow] | None = None) -> "TradeGovernor":
+        g = cls(cfg, windows or [])
         g.day = d.get("day", "")
+        g.trades_by_window = dict(d.get("trades_by_window", {}))
         g.trades_today = int(d.get("trades_today", 0))
         g.pnl_today = float(d.get("pnl_today", 0.0))
         g.start_equity = float(d.get("start_equity", 0.0))

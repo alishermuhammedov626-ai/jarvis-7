@@ -54,9 +54,10 @@ class SmcScalperBot:
 
     # ------------------------------------------------------------------ #
     def _load_governor(self) -> TradeGovernor:
+        windows = self.cfg.analysis.trade_windows
         if self.gov_path and self.gov_path.exists():
-            return TradeGovernor.from_dict(self.cfg.risk, json.loads(self.gov_path.read_text()))
-        return TradeGovernor(self.cfg.risk)
+            return TradeGovernor.from_dict(self.cfg.risk, json.loads(self.gov_path.read_text()), windows)
+        return TradeGovernor(self.cfg.risk, windows)
 
     def _save_governor(self) -> None:
         if not self.gov_path:

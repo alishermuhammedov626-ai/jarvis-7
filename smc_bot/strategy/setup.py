@@ -174,6 +174,13 @@ class SetupEngine:
         if risk <= 0:
             return None
 
+        if cfg.min_clear_path_rr > 0:
+            opposing = levels_above(levels, entry) if side is Side.LONG else levels_below(levels, entry)
+            blocking = [lv for lv in opposing if lv.is_major and abs(lv.price - entry) / risk < cfg.min_clear_path_rr]
+            if blocking:
+                self.funnel[f"{tf_name}:liquidity_in_path"] += 1
+                return None
+
         tp1, tp2, tp_meta = self._targets(side, entry, risk, levels)
         if tp1 is None or tp2 is None:
             return None
@@ -212,6 +219,20 @@ class SetupEngine:
 
         def rr_of(p: float) -> float:
             return abs(p - entry) / risk
+
+        if cfg.tp1_share <= 0:
+            # single-target mode: the whole position exits at TP2 (fixed R or a
+            # major level inside [min_rr_tp2, tp2_max_rr]); TP1 is not traded
+            tp2 = None
+            for lv in opposing:
+                if lv.is_major and cfg.min_rr_tp2 <= rr_of(lv.price) <= cfg.tp2_max_rr:
+                    tp2, meta["tp2_source"] = lv.price, lv.describe()
+                    break
+            if tp2 is None:
+                tp2 = entry + side.sign * cfg.tp2_fixed_rr * risk
+                meta["tp2_source"] = f"fixed_{cfg.tp2_fixed_rr:g}R"
+            meta["tp1_source"] = "single_target"
+            return tp2, tp2, meta
 
         tp1 = None
         if cfg.tp1_mode == "fixed":

@@ -114,6 +114,9 @@ class AnalysisConfig:
     tp2_fixed_rr: float = 3.0
     tp2_max_rr: float = 4.0
     tp1_fallback_rr: float = 1.5
+    # skip the setup when a *major* opposing liquidity level sits closer than
+    # this many R (0 = off): the target must not be hidden behind liquidity
+    min_clear_path_rr: float = 0.0
 
     # Pending limit order lifetime (minutes)
     entry_ttl_minutes: int = 60
@@ -131,6 +134,9 @@ class RiskConfig:
     risk_per_trade_pct: float = 1.0  # % of equity risked per trade
     max_open_positions: int = 2      # 2..3 per spec
     max_trades_per_day: int = 4
+    # at most this many trades per trade window (0 = unlimited); windows are
+    # AnalysisConfig.trade_windows, so "1 London + 1 New York" = 1
+    max_trades_per_window: int = 0
     daily_loss_limit_pct: float = 3.0  # stop trading for the day below this
     symbol_cooldown_minutes: int = 90  # no re-entry on same symbol after close
     leverage: int = 5
