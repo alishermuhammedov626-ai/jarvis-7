@@ -111,3 +111,14 @@ def test_state_persistence_roundtrip(tmp_path):
     t = pm.submit(_signal(), 10)
     pm2 = PositionManager(ex, AnalysisConfig(), RiskConfig(), state_path=path)
     assert t.id in pm2.trades and pm2.trades[t.id].state is TradeState.PENDING
+
+
+def test_market_entry_opens_immediately_with_protection():
+    spec = MarketSpec("X", 1.0, 0.01, 1, 5)
+    ex = PaperExchange(10_000, slippage_bps=10, fee_bps=0, specs={"X": spec})
+    pm = PositionManager(ex, AnalysisConfig(), RiskConfig(), fee_bps=0)
+    t = pm.submit_market(_signal(), qty=100, price=103.3)
+    assert t.state is TradeState.OPEN
+    assert t.avg_entry == pytest.approx(103.3 * 1.001)
+    assert ex.orders[t.sl_order_id].kind == "stop" and ex.orders[t.sl_order_id].price == 100.5
+    assert ex.orders[t.tp1_order_id].qty == 50 and ex.orders[t.tp2_order_id].qty == 50

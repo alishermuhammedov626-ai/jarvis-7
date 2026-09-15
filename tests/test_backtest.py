@@ -34,3 +34,12 @@ def test_backtest_runs_end_to_end():
     assert set(res) >= {"trades", "win_rate", "profit_factor", "final_equity", "equity_curve"}
     assert len(res["equity_curve"]) > 0
     assert res["final_equity"] > 0
+
+
+def test_backtest_confirm_mode_runs():
+    cfg = BotConfig()
+    cfg.analysis.entry_mode = "confirm"
+    cfg.analysis.premium_discount_filter = True
+    base = {"A": random_walk_1m(DAY0, days=3, seed=21)}
+    res = run_backtest(cfg, base, warmup_hours=30)
+    assert res["final_equity"] > 0 and "funnel" in res

@@ -91,6 +91,17 @@ class AnalysisConfig:
     # UTC windows in which new entries may be placed; empty = 24/7
     trade_windows: list[SessionWindow] = field(default_factory=list)
 
+    # ---- entry style ----
+    # "limit"   : resting limit order inside the zone (classic, more fills)
+    # "confirm" : wait until price trades into the zone AND a 1m candle closes
+    #             back out of it in the trade direction (reaction), then enter
+    #             at market.  Fewer fills, but avoids zones that get run through.
+    entry_mode: str = "limit"
+    # LONG only in the lower half (discount) / SHORT only in the upper half
+    # (premium) of the current H1 dealing range
+    premium_discount_filter: bool = False
+    dealing_range_candles: int = 48
+
     # ---- take-profit structure ----
     # "liquidity": TP1 = nearest opposing level; "fixed": TP1 = tp1_fixed_rr
     tp1_mode: str = "liquidity"

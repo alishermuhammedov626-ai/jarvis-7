@@ -106,6 +106,25 @@ class PositionManager:
         log.info("PENDING %s qty=%s | %s", t.id, qty, t.signal_summary)
         return t
 
+    def submit_market(self, sig: Signal, qty: float, price: float, risk_usd: float | None = None) -> Trade:
+        """Confirmation entry: market order at ``price`` (the confirming close)."""
+        self.ex.set_leverage(sig.symbol, self.rcfg.leverage, self.rcfg.margin_mode)
+        entry_id = self.ex.place_market(sig.symbol, sig.side, qty, price)
+        t = Trade(
+            id=uuid.uuid4().hex[:10],
+            symbol=sig.symbol, side=sig.side, qty=qty,
+            entry=price, stop_loss=sig.stop_loss, tp1=sig.tp1, tp2=sig.tp2, atr=sig.atr,
+            state=TradeState.PENDING, created_at=sig.created_at, expires_at=sig.expires_at,
+            entry_order_id=entry_id, signal_summary=sig.summary(),
+            risk_usd=risk_usd if risk_usd is not None else qty * sig.risk_per_unit,
+        )
+        self.trades[t.id] = t
+        # market orders normally fill at once; otherwise the poll picks it up
+        self._poll_pending(t, sig.created_at)
+        self.save()
+        log.info("MARKET %s qty=%s @ %s | %s", t.id, qty, price, t.signal_summary)
+        return t
+
     # ------------------------------------------------------------------ #
     # main poll
     def update(self, now: datetime, atr_by_symbol: dict[str, float] | None = None,

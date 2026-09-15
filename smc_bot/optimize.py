@@ -64,6 +64,8 @@ SPACE: dict[str, list[Any]] = {
     "analysis.tp2_fixed_rr": [2.0, 2.5, 3.0],
     "analysis.trail_atr_mult": [0.75, 1.0, 1.5],
     "analysis.trade_windows": list(KILL_ZONES.keys()),
+    "analysis.entry_mode": ["limit", "confirm"],
+    "analysis.premium_discount_filter": [False, True],
 }
 
 

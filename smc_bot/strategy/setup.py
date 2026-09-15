@@ -99,10 +99,27 @@ class SetupEngine:
                 continue
             sig = self._evaluate_tf(symbol, side, levels, levels_for_sweep, df, tf_name, now)
             if sig is not None:
+                if cfg.premium_discount_filter and not self._in_discount_or_premium(sig, h1):
+                    self.funnel[f"{tf_name}:premium_discount"] += 1
+                    continue
                 sig.meta["bias"] = bias.value
                 self.funnel["signal"] += 1
                 return sig
         return None
+
+    def _in_discount_or_premium(self, sig: Signal, h1: pd.DataFrame) -> bool:
+        """LONG entries must sit in the lower half of the recent H1 range,
+        SHORT entries in the upper half (buy cheap / sell expensive)."""
+        n = self.cfg.dealing_range_candles
+        if len(h1) < 2:
+            return True
+        window = h1.iloc[-n:]
+        hi, lo = float(window["high"].max()), float(window["low"].min())
+        if hi <= lo:
+            return True
+        mid = (hi + lo) / 2.0
+        sig.meta["dealing_range"] = (lo, hi)
+        return sig.entry <= mid if sig.side is Side.LONG else sig.entry >= mid
 
     # ------------------------------------------------------------------ #
     def _evaluate_tf(

@@ -9,7 +9,7 @@ Python 3.10+, `ccxt` (USDT-M perpetual futures, standart: Binance USDⓈ-M),
 
 ```
 pip install -r requirements.txt
-python -m pytest -q                      # 39 ta test
+python -m pytest -q                      # 44 ta test
 python -m smc_bot --config config.example.json          # paper (simulyatsiya) rejimi
 EXCHANGE_API_KEY=... EXCHANGE_API_SECRET=... \
 python -m smc_bot --config config.example.json --live   # haqiqiy orderlar
@@ -255,6 +255,8 @@ Har biri chastotani kamaytirib, sifatni oshiradi:
 | `max_setup_age_candles` | MSS dan keyin N sham ichida kirilmasa setup eskiradi |
 | `trade_windows` | faqat London (07–11) va NY (12–17 UTC) "kill zone" larida kirish |
 | `tp1_mode="fixed"`, `tp1_fixed_rr=1.0`, `tp1_share=0.6` | TP1 = 1R da 60%, keyin BE: "g'alaba" tezroq qayd etiladi, TP2 baribir ≥ 2R |
+| `entry_mode="confirm"` | "ko'r" limit o'rniga: narx zonaga kirib, M1 sham yo'nalishda zonadan tashqariga yopilib, oldingi sham high/low'ini olgandan keyin market kirish. Zona "teshib o'tiladigan" savdolar chiqib ketadi; SL zonada qoladi, qat'iy R nishonlar yangi entry'dan qayta hisoblanadi |
+| `premium_discount_filter` | LONG faqat oxirgi 48 H1 sham diapazonining pastki yarmida (discount), SHORT yuqori yarmida (premium) |
 
 `profiles/high_winrate.json` shu filtrlarning tayyor kombinatsiyasi:
 

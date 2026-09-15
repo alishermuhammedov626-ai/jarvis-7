@@ -6,6 +6,8 @@
     "displacement_atr_mult": 1.5,
     "allow_ob_fallback": false,
     "max_setup_age_candles": 6,
+    "entry_mode": "confirm",
+    "premium_discount_filter": true,
     "entry_zone_ratio": 0.25,
     "entry_ttl_minutes": 45,
     "sl_atr_buffer": 0.5,

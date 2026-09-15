@@ -10,7 +10,7 @@ from __future__ import annotations
 import itertools
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Protocol
 
 from ..models import MarketQuality, MarketSpec, Side
@@ -32,6 +32,7 @@ class Exchange(Protocol):
     def equity(self) -> float: ...
     def set_leverage(self, symbol: str, leverage: int, margin_mode: str) -> None: ...
     def place_limit(self, symbol: str, side: Side, qty: float, price: float) -> str: ...
+    def place_market(self, symbol: str, side: Side, qty: float, ref_price: float) -> str: ...
     def place_stop_market(self, symbol: str, close_side: Side, qty: float, stop_price: float) -> str: ...
     def place_take_profit_market(self, symbol: str, close_side: Side, qty: float, stop_price: float) -> str: ...
     def cancel(self, symbol: str, order_id: str) -> None: ...
@@ -100,6 +101,10 @@ class CcxtFuturesExchange:
             symbol, "limit", _order_side(side), self._amount(symbol, qty),
             self._price(symbol, price), {"timeInForce": "GTC"},
         )
+        return str(o["id"])
+
+    def place_market(self, symbol: str, side: Side, qty: float, ref_price: float) -> str:
+        o = self.client.create_order(symbol, "market", _order_side(side), self._amount(symbol, qty))
         return str(o["id"])
 
     def place_stop_market(self, symbol: str, close_side: Side, qty: float, stop_price: float) -> str:
@@ -197,6 +202,13 @@ class PaperExchange:
     def place_limit(self, symbol, side, qty, price):
         return self._new(symbol, side, "limit", qty, price)
 
+    def place_market(self, symbol, side, qty, ref_price):
+        """Fills immediately at ``ref_price`` +/- slippage."""
+        oid = self._new(symbol, side, "market", qty, ref_price)
+        px = ref_price * (1 + self.slippage) if side is Side.LONG else ref_price * (1 - self.slippage)
+        self._fill(self.orders[oid], px, datetime.now(timezone.utc))
+        return oid
+
     def place_stop_market(self, symbol, close_side, qty, stop_price):
         return self._new(symbol, close_side, "stop", qty, stop_price)
 
@@ -228,7 +240,7 @@ class PaperExchange:
         """Fill resting orders against one candle.  Returns filled order ids.
         Stops are evaluated before take-profits (conservative)."""
         filled: list[str] = []
-        order = {"stop": 0, "limit": 1, "tp": 2}
+        order = {"stop": 0, "limit": 1, "tp": 2, "market": 3}
         for o in sorted((o for o in self.orders.values() if o.symbol == symbol and o.status == "open"),
                         key=lambda x: order[x.kind]):
             if o.kind == "limit":

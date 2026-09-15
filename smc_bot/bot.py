@@ -25,6 +25,7 @@ from .indicators import atr as atr_indicator
 from .models import MarketQuality, Signal, Trade
 from .risk.filters import TradeGovernor, market_filter, order_fits_depth, rank_candidates
 from .risk.sizing import position_size
+from .strategy.confirm import check_confirmation
 from .strategy.setup import SetupEngine
 
 log = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class SmcScalperBot:
             fee_bps=cfg.exchange.fee_bps,
         )
         self._seen: set[str] = set()
+        self.armed: dict[str, Signal] = {}       # confirm-mode setups waiting for a reaction
         self.skipped: Counter[str] = Counter()   # signals dropped at sizing / depth checks
         self._running = True
         self._equity_cache = 0.0
@@ -82,7 +84,7 @@ class SmcScalperBot:
         """Run the pipeline on every tradable symbol and return fresh signals."""
         found: list[Signal] = []
         for symbol, mq in qualities.items():
-            if self.manager.has_active(symbol):
+            if self.manager.has_active(symbol) or symbol in self.armed:
                 continue
             ok, why = self.governor.can_trade(symbol, now, self._equity_cache)
             if not ok:
@@ -135,8 +137,11 @@ class SmcScalperBot:
                 log.exception("price/atr fetch failed for %s", t.symbol)
         self.manager.update(now, atrs, prices)
 
-        # 3. new entries
-        slots = self.manager.open_slots()
+        # 3. armed setups waiting for confirmation
+        self._check_armed(now, qualities)
+
+        # 4. new entries (armed setups reserve a slot)
+        slots = self.manager.open_slots() - len(self.armed)
         if slots <= 0:
             return
         signals = self.scan(now, qualities)
@@ -144,11 +149,61 @@ class SmcScalperBot:
             return
         for sig in rank_candidates(signals, qualities, slots):
             self._seen.add(sig.meta["dedup_key"])
-            self._submit(sig, qualities[sig.symbol], now)
+            if self.cfg.analysis.entry_mode == "confirm":
+                self.armed[sig.symbol] = sig
+                log.info("ARMED %s (waiting for 1m reaction in zone)", sig.summary())
+            else:
+                self._submit(sig, qualities[sig.symbol], now)
 
-    def _submit(self, sig: Signal, mq: MarketQuality, now: datetime) -> None:
+    def _check_armed(self, now: datetime, qualities: dict[str, MarketQuality]) -> None:
+        for symbol, sig in list(self.armed.items()):
+            if now >= sig.expires_at:
+                self.armed.pop(symbol)
+                self.skipped["confirm_expired"] += 1
+                continue
+            try:
+                m1 = self.data.ohlcv(symbol, "1m", self.cfg.analysis.entry_ttl_minutes + 5, now)
+            except Exception:
+                log.exception("m1 fetch failed for %s", symbol)
+                continue
+            status, price = check_confirmation(m1, sig, sig.created_at)
+            if status == "invalid":
+                self.armed.pop(symbol)
+                self.skipped["confirm_invalidated"] += 1
+            elif status == "confirmed":
+                self.armed.pop(symbol)
+                mq = qualities.get(symbol)
+                if mq is None:
+                    self.skipped["confirm_market_filtered"] += 1
+                    continue
+                self._rebase_targets(sig, price)
+                if sig.rr2 < self.cfg.analysis.min_rr_tp2 or sig.rr1 < self.cfg.analysis.min_rr_tp1:
+                    self.skipped["confirm_rr_too_low"] += 1
+                    continue
+                sig.created_at = now
+                self._submit(sig, mq, now, market=True)
+
+    @staticmethod
+    def _rebase_targets(sig: Signal, price: float) -> None:
+        """Confirmation entry: SL stays anchored to the zone, liquidity-based
+        targets stay where the liquidity is, but *fixed-R* targets are
+        re-expressed from the actual entry price."""
+        old_risk = sig.risk_per_unit
+        rr1, rr2 = sig.rr1, sig.rr2
+        sig.entry = price
+        new_risk = sig.risk_per_unit
+        if new_risk <= 0:
+            return
+        if str(sig.meta.get("tp1_source", "")).startswith("fixed"):
+            sig.tp1 = price + sig.side.sign * rr1 * new_risk
+        if str(sig.meta.get("tp2_source", "")).startswith("fixed"):
+            sig.tp2 = price + sig.side.sign * max(rr2, sig.rr1 + 1.0) * new_risk
+        sig.meta["confirm_entry"] = True
+
+    def _submit(self, sig: Signal, mq: MarketQuality, now: datetime, market: bool = False) -> None:
         spec = self.ex.market_spec(sig.symbol)
-        cost_bps = 2 * self.cfg.exchange.fee_bps + self.cfg.exchange.slippage_bps
+        # round-trip fees + stop-market slippage on exit (+ entry slippage for market entries)
+        cost_bps = 2 * self.cfg.exchange.fee_bps + self.cfg.exchange.slippage_bps * (2 if market else 1)
         stop_bps = sig.risk_per_unit / sig.entry * 10_000.0
         if stop_bps < self.cfg.risk.min_stop_to_cost_ratio * cost_bps:
             log.info("%s: stop %.1fbps too tight vs cost %.1fbps, skipped", sig.symbol, stop_bps, cost_bps)
@@ -168,7 +223,10 @@ class SmcScalperBot:
                  sig.meta.get("tp1_source"), sig.meta.get("tp2_source"))
         # 1R = the full budget: price distance + round-trip costs on the notional
         risk_usd = qty * (sig.risk_per_unit + sig.entry * cost_bps / 10_000.0)
-        self.manager.submit(sig, qty, risk_usd)
+        if market:
+            self.manager.submit_market(sig, qty, sig.entry, risk_usd)
+        else:
+            self.manager.submit(sig, qty, risk_usd)
         self.governor.register_open(now, self._equity_cache)
         self._save_governor()
 
