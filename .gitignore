@@ -4,3 +4,5 @@ __pycache__/
 reports/raw_results.csv
 reports/variants_raw.csv
 .env
+reports/**/*_raw.csv
+reports/*_raw.csv

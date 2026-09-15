@@ -1,4 +1,24 @@
-# jarvis-7 — Halol (spot, long-only) Binance boti + sintetik backtester
+# jarvis-7 — Binance savdo boti + sintetik backtester (spot halol rejimi va futures rejimi)
+
+## Futures rejimi (foydalanuvchi qarori bilan qo'shilgan) — 43 strategiya sinovi
+
+Futures ko'pchilik ulamolar fikricha halol emas; foydalanuvchi shunga qaramay futures rejimini so'radi.
+`halalbot/futures_backtest.py` (long+short, leverage, funding, likvidatsiya), `halalbot/strategy_zoo.py`
+(43 mashhur strategiya), `run_zoo.py` (ikki bosqichli qidiruv), `halalbot/futures_live.py` (testnet/jonli).
+
+**Natija: 12 900 backtestda 0 strategiya mezondan o'tdi.** Kuniga 2.5+ savdo qiladiganlar 90 kunda median
+-25..-66%, tasodifiy kirish nazorati -42%. Komissiya 0% qilinganda 11 ta "topildi", yangi grafiklarda 2 ta,
+yana yangi grafiklarda 0 ta qoldi — ko'p marta sinash tuzog'i. To'liq: `reports/FUTURES_XULOSA.md`,
+`reports/zoo_results.md`, `reports/zoo_fee0/zoo_results.md`.
+
+```bash
+python3 run_zoo.py --charts 30 --val-charts 40 --leverage 3 --fee 0.0005     # ~3 daqiqa, 4 yadro
+python3 run_futures_live.py --strategy bollinger_meanrev_20_2 --leverage 3 --dry-run 1   # testnet dry-run
+```
+
+---
+
+# Spot (halol) rejimi
 
 ## Eng muhim xulosa (avval buni o'qing)
 
